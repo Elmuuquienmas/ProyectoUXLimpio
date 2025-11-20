@@ -51,7 +51,7 @@ function App() {
   // --- 1. SESIÓN PERSISTENTE ---
   const [currentUser, setCurrentUser] = useState(() => localStorage.getItem("activeUser") || null);
   const [loginName, setLoginName] = useState("");
-  const [isDataLoaded, setIsDataLoaded] = useState(false); // Candado de seguridad
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   // --- 2. ESTADOS DEL JUEGO ---
   const [coins, setCoins] = useState(5000);
@@ -81,34 +81,24 @@ function App() {
     setTimeout(() => setToast((prev) => ({ ...prev, visible: false })), 4000);
   }, []);
 
-  // --- 4. LOGICA DE CARGA DE DATOS (CORREGIDA PARA NUEVOS USUARIOS) ---
+  // --- IMÁGENES (OBJETO) ---
+  const images = {
+    parcela: parcelaImg,
+    lumberjack: { idle: baseImg, chopping: [trabajandoImg, trabajando2Img], sitting: [descansoImg, descanso2Img] },
+    objects: { perro: perroImg, gato: gatoImg, casa: casaImg },
+  };
+
+  // --- 4. LOGICA DE CARGA DE DATOS ---
   useEffect(() => {
       if (currentUser) {
-          // A. MONEDAS
           const savedCoins = localStorage.getItem(`${currentUser}_coins`);
-          if (savedCoins) {
-              setCoins(parseInt(savedCoins)); // Cargar existente
-          } else {
-              setCoins(5000); // RESETEAR A DEFAULT SI ES NUEVO
-          }
+          if (savedCoins) { setCoins(parseInt(savedCoins)); } else { setCoins(5000); }
 
-          // B. OBJETOS
           const savedObjs = localStorage.getItem(`${currentUser}_objects`);
-          if (savedObjs) {
-              try { 
-                  const parsed = JSON.parse(savedObjs);
-                  setParcelaObjects(Array.isArray(parsed) ? parsed : []);
-              } catch(e) { setParcelaObjects([]); }
-          } else {
-              setParcelaObjects([]); // RESETEAR A VACÍO SI ES NUEVO
-          }
+          if (savedObjs) { try { const parsed = JSON.parse(savedObjs); setParcelaObjects(Array.isArray(parsed) ? parsed : []); } catch(e) { setParcelaObjects([]); } } else { setParcelaObjects([]); }
 
-          // C. TAREAS
           const savedTasks = localStorage.getItem(`${currentUser}_tasks`);
-          if (savedTasks) {
-              try { setTasks(JSON.parse(savedTasks)); } catch(e) { setTasks([]); }
-          } else {
-              // RESETEAR A DEFAULT SI ES NUEVO
+          if (savedTasks) { try { setTasks(JSON.parse(savedTasks)); } catch(e) { setTasks([]); } } else {
               setTasks([
                 { id: 1, name: "Leer 1 artículo", reward: 10, completed: false, inProgress: false, deadline: null },
                 { id: 2, name: "Organizar correo", reward: 25, completed: false, inProgress: false, deadline: null },
@@ -116,15 +106,9 @@ function App() {
               ]);
           }
 
-          // D. TEMA VISUAL
           const savedTheme = localStorage.getItem(`${currentUser}_theme`);
-          if (savedTheme) {
-              changeThemeColor(savedTheme, false);
-          } else {
-              changeThemeColor("indigo", false); // RESETEAR A INDIGO SI ES NUEVO
-          }
+          if (savedTheme) { changeThemeColor(savedTheme, false); } else { changeThemeColor("indigo", false); }
 
-          // E. ABRIR CANDADO
           setIsDataLoaded(true);
       } else {
           setIsDataLoaded(false);
@@ -132,18 +116,9 @@ function App() {
   }, [currentUser]);
 
   // --- 5. LÓGICA DE GUARDADO ---
-  useEffect(() => {
-      if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_coins`, coins.toString());
-  }, [coins, currentUser, isDataLoaded]);
-
-  useEffect(() => {
-      if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_objects`, JSON.stringify(parcelaObjects));
-  }, [parcelaObjects, currentUser, isDataLoaded]);
-
-  useEffect(() => {
-      if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_tasks`, JSON.stringify(tasks));
-  }, [tasks, currentUser, isDataLoaded]);
-
+  useEffect(() => { if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_coins`, coins.toString()); }, [coins, currentUser, isDataLoaded]);
+  useEffect(() => { if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_objects`, JSON.stringify(parcelaObjects)); }, [parcelaObjects, currentUser, isDataLoaded]);
+  useEffect(() => { if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_tasks`, JSON.stringify(tasks)); }, [tasks, currentUser, isDataLoaded]);
 
   // --- LOGIN / LOGOUT ---
   const handleLogin = (e) => {
@@ -158,18 +133,16 @@ function App() {
   const handleLogout = () => {
       if(confirm("¿Cerrar sesión? Se guardará tu progreso.")) {
           localStorage.removeItem("activeUser");
-          setIsDataLoaded(false); // IMPORTANTE: Bloquear guardado mientras salimos
+          setIsDataLoaded(false);
           setCurrentUser(null);
           setLoginName("");
-          
-          // Limpiar estado visual para que el próximo login se vea limpio
           setCoins(5000);
           setParcelaObjects([]);
           changeThemeColor("indigo", false);
       }
   };
 
-  // --- RESTO DE LÓGICA (Reloj, Animaciones, Drag&Drop) ---
+  // --- RESTO DE LÓGICA ---
   useEffect(() => {
     const timer = setInterval(() => {
         const now = new Date();
@@ -291,7 +264,6 @@ function App() {
       
       if(save && currentUser) {
           localStorage.setItem(`${currentUser}_theme`, color);
-          // Solo mostrar toast si es una acción manual, no al cargar
           if(isDataLoaded) showToast("Tema guardado", "info");
       }
       if(!color.startsWith("#")) setConfigDropdownOpen(false);
@@ -308,11 +280,6 @@ function App() {
     { name: "Gato", description: "Un adorable gatito.", cost: 100, type: "object", objectId: "gato", lucideIcon: Cat },
     { name: "Casa", description: "Una hermosa casa.", cost: 500, type: "object", objectId: "casa", lucideIcon: Home },
   ];
-  const images = {
-    parcela: parcelaImg,
-    lumberjack: { idle: baseImg, chopping: [trabajandoImg, trabajando2Img], sitting: [descansoImg, descanso2Img] },
-    objects: { perro: perroImg, gato: gatoImg, casa: casaImg },
-  };
 
   // --- LOGIN SCREEN ---
   if (!currentUser) {
@@ -351,6 +318,13 @@ function App() {
         .house-size { width: 16rem; height: 16rem; }
         .standard-size { width: 6rem; height: 6rem; }
       `}</style>
+
+      {/* --- PRELOADER DE IMÁGENES (Fix Vercel) --- */}
+      <div className="hidden" style={{ display: 'none' }}>
+          <img src={images.lumberjack.idle} alt="preload" />
+          {images.lumberjack.chopping.map((src, i) => <img key={`chop-${i}`} src={src} alt="preload" />)}
+          {images.lumberjack.sitting.map((src, i) => <img key={`sit-${i}`} src={src} alt="preload" />)}
+      </div>
 
       {/* TOAST */}
       <div className={`fixed bottom-6 left-6 z-50 transition-all duration-500 ${toast.visible ? "translate-x-0 opacity-100" : "-translate-x-20 opacity-0"}`}>
@@ -455,7 +429,8 @@ function App() {
 
             <div className="absolute bottom-[10%] left-1/2 -translate-x-1/2 z-20 pointer-events-none transition-all duration-500">
                 <div className="relative">
-                    <img src={getLumberjackImage()} alt="Leñador" className="h-32 object-contain drop-shadow-2xl" style={{ imageRendering: "pixelated" }} />
+                    {/* FIX ANIMACIÓN VERCEL: KEY PARA FORZAR RENDER */}
+                    <img key={getLumberjackImage()} src={getLumberjackImage()} alt="Leñador" className="h-32 object-contain drop-shadow-2xl" style={{ imageRendering: "pixelated" }} />
                     {/* GAMERTAG */}
                     <div className="absolute -top-14 left-1/2 -translate-x-1/2 bg-white/80 backdrop-blur px-4 py-1 rounded-xl shadow-lg border-2 border-white transform hover:scale-110 transition flex flex-col items-center">
                         <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Jugador</span>
