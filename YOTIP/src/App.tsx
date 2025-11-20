@@ -22,7 +22,10 @@ import {
   Trash2,
   Clock,
   User,
-  LogOut
+  LogOut,
+  Calendar,
+  Activity,
+  Star
 } from "lucide-react";
 
 // --- IMÁGENES ---
@@ -81,33 +84,32 @@ function App() {
     setTimeout(() => setToast((prev) => ({ ...prev, visible: false })), 4000);
   }, []);
 
-  // --- IMÁGENES (OBJETO) ---
-  const images = {
-    parcela: parcelaImg,
-    lumberjack: { idle: baseImg, chopping: [trabajandoImg, trabajando2Img], sitting: [descansoImg, descanso2Img] },
-    objects: { perro: perroImg, gato: gatoImg, casa: casaImg },
-  };
-
-  // --- 4. LOGICA DE CARGA DE DATOS ---
+  // --- 4. LOGICA DE CARGA ---
   useEffect(() => {
       if (currentUser) {
           const savedCoins = localStorage.getItem(`${currentUser}_coins`);
-          if (savedCoins) { setCoins(parseInt(savedCoins)); } else { setCoins(5000); }
+          setCoins(savedCoins ? parseInt(savedCoins) : 5000);
 
           const savedObjs = localStorage.getItem(`${currentUser}_objects`);
-          if (savedObjs) { try { const parsed = JSON.parse(savedObjs); setParcelaObjects(Array.isArray(parsed) ? parsed : []); } catch(e) { setParcelaObjects([]); } } else { setParcelaObjects([]); }
+          try { 
+              const parsed = JSON.parse(savedObjs);
+              setParcelaObjects(Array.isArray(parsed) ? parsed : []);
+          } catch(e) { setParcelaObjects([]); }
 
           const savedTasks = localStorage.getItem(`${currentUser}_tasks`);
-          if (savedTasks) { try { setTasks(JSON.parse(savedTasks)); } catch(e) { setTasks([]); } } else {
+          try { 
+              const parsedTasks = JSON.parse(savedTasks);
+              setTasks(parsedTasks || []);
+          } catch(e) { 
               setTasks([
                 { id: 1, name: "Leer 1 artículo", reward: 10, completed: false, inProgress: false, deadline: null },
                 { id: 2, name: "Organizar correo", reward: 25, completed: false, inProgress: false, deadline: null },
                 { id: 3, name: "Ejercicio 30 min", reward: 50, completed: false, inProgress: false, deadline: null },
-              ]);
+              ]); 
           }
 
           const savedTheme = localStorage.getItem(`${currentUser}_theme`);
-          if (savedTheme) { changeThemeColor(savedTheme, false); } else { changeThemeColor("indigo", false); }
+          changeThemeColor(savedTheme || "indigo", false);
 
           setIsDataLoaded(true);
       } else {
@@ -120,7 +122,7 @@ function App() {
   useEffect(() => { if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_objects`, JSON.stringify(parcelaObjects)); }, [parcelaObjects, currentUser, isDataLoaded]);
   useEffect(() => { if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_tasks`, JSON.stringify(tasks)); }, [tasks, currentUser, isDataLoaded]);
 
-  // --- LOGIN / LOGOUT ---
+  // --- MANEJO DE LOGIN / LOGOUT ---
   const handleLogin = (e) => {
       e.preventDefault();
       const name = loginName.trim();
@@ -131,13 +133,14 @@ function App() {
   };
 
   const handleLogout = () => {
-      if(confirm("¿Cerrar sesión? Se guardará tu progreso.")) {
+      if(confirm("¿Cerrar sesión?")) {
           localStorage.removeItem("activeUser");
           setIsDataLoaded(false);
           setCurrentUser(null);
           setLoginName("");
           setCoins(5000);
           setParcelaObjects([]);
+          setTasks([]);
           changeThemeColor("indigo", false);
       }
   };
@@ -262,10 +265,7 @@ function App() {
       document.documentElement.style.setProperty("--theme-color-bg", b);
       document.documentElement.style.setProperty("--theme-rgb", hexToRgb(p));
       
-      if(save && currentUser) {
-          localStorage.setItem(`${currentUser}_theme`, color);
-          if(isDataLoaded) showToast("Tema guardado", "info");
-      }
+      if(save && currentUser) localStorage.setItem(`${currentUser}_theme`, color);
       if(!color.startsWith("#")) setConfigDropdownOpen(false);
   };
 
@@ -280,6 +280,60 @@ function App() {
     { name: "Gato", description: "Un adorable gatito.", cost: 100, type: "object", objectId: "gato", lucideIcon: Cat },
     { name: "Casa", description: "Una hermosa casa.", cost: 500, type: "object", objectId: "casa", lucideIcon: Home },
   ];
+  const images = {
+    parcela: parcelaImg,
+    lumberjack: { idle: baseImg, chopping: [trabajandoImg, trabajando2Img], sitting: [descansoImg, descanso2Img] },
+    objects: { perro: perroImg, gato: gatoImg, casa: casaImg },
+  };
+
+  // --- COMPONENTES DE GRÁFICOS ---
+  const DonutChart = ({ tasks }) => {
+      const total = tasks.length === 0 ? 1 : tasks.length;
+      const completed = tasks.filter(t => t.completed).length;
+      const inProgress = tasks.filter(t => t.inProgress).length;
+      const pending = total - completed - inProgress;
+      
+      const r = 16;
+      const c = 2 * Math.PI * r; 
+      
+      const p1 = (completed / total) * c;
+      const p2 = (inProgress / total) * c;
+      const p3 = (pending / total) * c;
+
+      return (
+          <div className="flex items-center gap-6">
+             <div className="relative w-32 h-32">
+                <svg viewBox="0 0 40 40" className="transform -rotate-90 w-full h-full">
+                   <circle cx="20" cy="20" r="16" fill="transparent" stroke="#e5e7eb" strokeWidth="8" />
+                   <circle cx="20" cy="20" r="16" fill="transparent" stroke="#22c55e" strokeWidth="8" strokeDasharray={`${p1} ${c}`} />
+                   <circle cx="20" cy="20" r="16" fill="transparent" stroke="#3b82f6" strokeWidth="8" strokeDasharray={`${p2} ${c}`} strokeDashoffset={-p1} />
+                   <circle cx="20" cy="20" r="16" fill="transparent" stroke="#f59e0b" strokeWidth="8" strokeDasharray={`${p3} ${c}`} strokeDashoffset={-(p1 + p2)} />
+                </svg>
+                <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="text-center">
+                        <p className="text-xl font-black text-gray-700">{tasks.length}</p>
+                        <p className="text-[8px] text-gray-400 uppercase">Total</p>
+                    </div>
+                </div>
+             </div>
+             <div className="space-y-2 text-xs font-medium text-gray-600">
+                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-green-500"></div> Terminadas ({completed})</div>
+                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div> En Proceso ({inProgress})</div>
+                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-yellow-500"></div> Pendientes ({pending})</div>
+             </div>
+          </div>
+      );
+  };
+
+  const LineChart = () => (
+      <div className="w-full h-32 flex items-end justify-between gap-1 pt-4">
+          {[40, 60, 35, 80, 55, 90, 45, 70, 50, 95, 65, 85].map((h, i) => (
+              <div key={i} className="w-full bg-indigo-200/50 rounded-t-sm hover:bg-indigo-400 transition-all relative group" style={{height: `${h}%`}}>
+                  <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-black/80 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition">{h}%</div>
+              </div>
+          ))}
+      </div>
+  );
 
   // --- LOGIN SCREEN ---
   if (!currentUser) {
@@ -319,7 +373,7 @@ function App() {
         .standard-size { width: 6rem; height: 6rem; }
       `}</style>
 
-      {/* --- PRELOADER DE IMÁGENES (Fix Vercel) --- */}
+      {/* PRELOADER */}
       <div className="hidden" style={{ display: 'none' }}>
           <img src={images.lumberjack.idle} alt="preload" />
           {images.lumberjack.chopping.map((src, i) => <img key={`chop-${i}`} src={src} alt="preload" />)}
@@ -334,7 +388,7 @@ function App() {
         </div>
       </div>
 
-      {/* MODAL TAREA */}
+      {/* MODAL */}
       {isAddTaskModalOpen && (
         <div className="fixed inset-0 bg-black/20 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-md liquid-glass p-8 pop-in shadow-2xl border border-white/60">
@@ -354,10 +408,9 @@ function App() {
         <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ShoppingCart className="text-indigo-600" /> Tienda</h3><button onClick={() => setStoreDrawerOpen(false)} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20}/></button></div>
         <div className="p-5 rounded-2xl bg-gradient-to-br from-yellow-100/80 to-orange-100/80 border border-white/50 mb-6 shadow-sm backdrop-blur-sm"><p className="text-xs font-bold text-yellow-800 uppercase tracking-wide mb-1">Tu Saldo</p><p className="text-4xl font-black text-yellow-600 flex items-center gap-1 tracking-tighter">{coins}<DollarSign size={28}/></p></div>
         <div className="space-y-3 overflow-y-auto max-h-[60vh] pr-1">
-          {storeItems.map((item, i) => {
-            const Icon = item.lucideIcon;
-            return <div key={i} className="liquid-glass-panel p-4 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center gap-2 mb-1">{Icon && <Icon size={18} className="text-gray-800"/>} <span className="font-bold text-gray-900">{item.name}</span></div><p className="text-[10px] text-gray-600 font-medium">{item.description}</p></div><button onClick={() => handleBuyItem(item)} className="ml-2 bg-white/80 text-indigo-700 border border-indigo-100 font-bold text-xs px-3 py-2 rounded-lg shadow-sm hover:bg-indigo-600 hover:text-white transition-all flex flex-col items-center min-w-[60px]"><span>${item.cost}</span></button></div>
-          })}
+          {storeItems.map((item, i) => (
+            <div key={i} className="liquid-glass-panel p-4 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center gap-2 mb-1">{item.lucideIcon && <item.lucideIcon size={18} className="text-gray-800"/>} <span className="font-bold text-gray-900">{item.name}</span></div><p className="text-[10px] text-gray-600 font-medium">{item.description}</p></div><button onClick={() => handleBuyItem(item)} className="ml-2 bg-white/80 text-indigo-700 border border-indigo-100 font-bold text-xs px-3 py-2 rounded-lg shadow-sm hover:bg-indigo-600 hover:text-white transition-all flex flex-col items-center min-w-[60px]"><span>${item.cost}</span></button></div>
+          ))}
         </div>
       </aside>
 
@@ -402,15 +455,64 @@ function App() {
         </div>
       </header>
 
-      {/* PANEL DATOS */}
+      {/* PANEL DATOS (DASHBOARD) */}
       {tycoonPanelOpen && (
         <div className="fixed inset-0 z-20 pt-28 px-4 bg-black/10 backdrop-blur-sm transition-all" onClick={() => setTycoonPanelOpen(false)}>
-          <div className="max-w-5xl mx-auto liquid-glass p-8 pop-in shadow-2xl border-t-4 border-indigo-500 bg-white/80" onClick={(e) => e.stopPropagation()}>
-             <h2 className="text-3xl font-black text-gray-800 mb-2">Progreso de {currentUser}</h2>
-             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
-                <div className="bg-gradient-to-br from-yellow-50 to-orange-50 p-6 rounded-2xl border border-yellow-100 shadow-sm"><div className="flex items-center gap-3 mb-2"><div className="p-2 bg-yellow-200 text-yellow-700 rounded-lg"><DollarSign size={24}/></div><span className="text-sm font-bold text-yellow-800/60 uppercase">Economía</span></div><p className="text-4xl font-black text-yellow-600">{coins}</p></div>
-                <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 rounded-2xl border border-indigo-100 shadow-sm"><div className="flex items-center gap-3 mb-2"><div className="p-2 bg-indigo-200 text-indigo-700 rounded-lg"><Home size={24}/></div><span className="text-sm font-bold text-indigo-800/60 uppercase">Decoración</span></div><p className="text-4xl font-black text-indigo-600">{parcelaObjects.length}</p></div>
-                <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-6 rounded-2xl border border-green-100 shadow-sm"><div className="flex items-center gap-3 mb-2"><div className="p-2 bg-green-200 text-green-700 rounded-lg"><Check size={24}/></div><span className="text-sm font-bold text-green-800/60 uppercase">Completadas</span></div><p className="text-4xl font-black text-green-600">{tasks.filter(t=>t.completed).length}</p></div>
+          <div className="max-w-6xl mx-auto liquid-glass p-8 pop-in shadow-2xl border-t-4 border-indigo-500 bg-white/80 h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+             <h2 className="text-3xl font-black text-gray-800 mb-6 flex items-center gap-2"><Activity className="text-indigo-600"/> Actividad de {currentUser}</h2>
+             
+             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 mb-6">
+                 {/* Gráfica Línea */}
+                 <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col">
+                     <h4 className="font-bold text-gray-600 mb-4">Actividad Semanal</h4>
+                     <div className="flex-1 flex items-end justify-between gap-2 pb-4 relative"><LineChart /></div>
+                     <div className="flex justify-between text-xs text-gray-400 font-bold px-2"><span>Lun</span><span>Mar</span><span>Mie</span><span>Jue</span><span>Vie</span><span>Sab</span><span>Dom</span></div>
+                 </div>
+
+                 {/* Gráfica Dona */}
+                 <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col items-center justify-center">
+                      <h4 className="font-bold text-gray-600 mb-4 w-full text-left">Estado de Tareas</h4>
+                      <DonutChart tasks={tasks} />
+                 </div>
+             </div>
+
+             {/* Tabla */}
+             <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner overflow-hidden flex-1 flex flex-col">
+                 <div className="grid grid-cols-5 gap-4 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-300/50 pb-3 mb-2">
+                     <div className="flex items-center gap-1"><Calendar size={14}/> Fecha</div>
+                     <div className="flex items-center gap-1 col-span-2">Nombre</div>
+                     <div className="flex items-center gap-1">Progreso</div>
+                     <div className="flex items-center gap-1 text-right justify-end">Dificultad</div>
+                 </div>
+                 <div className="overflow-y-auto pr-2 space-y-2">
+                     {tasks.map(t => {
+                        // LÓGICA DE ESTRELLAS
+                        // 1 estrella por cada 100 monedas.
+                        // >= 500 -> 5 estrellas
+                        // >= 1000 -> 5 estrellas moradas
+                        let starCount = Math.min(5, Math.max(1, Math.floor(t.reward / 100)));
+                        if (t.reward >= 500) starCount = 5;
+                        
+                        const isMaxLevel = t.reward >= 1000;
+                        const starColor = isMaxLevel ? "text-purple-600" : "text-yellow-400";
+
+                        return (
+                         <div key={t.id} className="grid grid-cols-5 gap-4 items-center py-3 border-b border-gray-200/30 hover:bg-white/40 transition rounded-lg px-2">
+                             <div className="text-xs font-bold text-gray-600">{t.deadline ? new Date(t.deadline).toLocaleDateString() : "Hoy"}</div>
+                             <div className="col-span-2 font-bold text-gray-800 truncate">{t.name} <span className="text-[10px] text-indigo-400 font-normal block">{currentUser}</span></div>
+                             <div>
+                                 <div className="flex items-center gap-2">
+                                     <span className="text-xs font-bold">{t.completed ? "100%" : t.inProgress ? "50%" : "0%"}</span>
+                                     <div className={`w-3 h-3 rounded-full ${t.completed ? "bg-green-500" : t.inProgress ? "bg-blue-500" : "bg-gray-300"}`}></div>
+                                 </div>
+                             </div>
+                             <div className={`flex justify-end gap-0.5 ${starColor}`}>
+                                 {[...Array(starCount)].map((_, i) => <Star key={i} size={12} fill="currentColor" />)}
+                             </div>
+                         </div>
+                     )})}
+                     {tasks.length === 0 && <p className="text-center text-gray-400 py-4 italic text-sm">No hay actividad registrada.</p>}
+                 </div>
              </div>
           </div>
         </div>
@@ -419,7 +521,6 @@ function App() {
       {/* MAIN PARCELA */}
       <main className="pt-32 pb-10 px-4 min-h-screen flex items-center justify-center overflow-hidden">
         <div ref={parcelaRef} className="relative w-full max-w-6xl aspect-video liquid-glass p-0 shadow-2xl group overflow-hidden">
-            {/* IMAGEN FONDO 90% */}
             <div className="absolute inset-0 bg-no-repeat bg-center opacity-90" style={{ backgroundImage: `url(${images.parcela})`, backgroundSize: '90%' }}></div>
             <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/10 to-transparent pointer-events-none"></div>
 
@@ -429,9 +530,7 @@ function App() {
 
             <div className="absolute bottom-[10%] left-1/2 -translate-x-1/2 z-20 pointer-events-none transition-all duration-500">
                 <div className="relative">
-                    {/* FIX ANIMACIÓN VERCEL: KEY PARA FORZAR RENDER */}
                     <img key={getLumberjackImage()} src={getLumberjackImage()} alt="Leñador" className="h-32 object-contain drop-shadow-2xl" style={{ imageRendering: "pixelated" }} />
-                    {/* GAMERTAG */}
                     <div className="absolute -top-14 left-1/2 -translate-x-1/2 bg-white/80 backdrop-blur px-4 py-1 rounded-xl shadow-lg border-2 border-white transform hover:scale-110 transition flex flex-col items-center">
                         <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Jugador</span>
                         <span className="text-sm font-black text-gray-800 leading-none pb-1">{currentUser}</span>
