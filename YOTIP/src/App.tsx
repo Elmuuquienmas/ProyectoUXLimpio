@@ -25,7 +25,11 @@ import {
   LogOut,
   Calendar,
   Activity,
-  Star
+  Star,
+  HelpCircle,
+  Mail,
+  MessageCircle,
+  ChevronUp
 } from "lucide-react";
 
 // --- IMÁGENES ---
@@ -66,6 +70,11 @@ function App() {
   const [activitiesDrawerOpen, setActivitiesDrawerOpen] = useState(false);
   const [configDropdownOpen, setConfigDropdownOpen] = useState(false);
   const [tycoonPanelOpen, setTycoonPanelOpen] = useState(false);
+  const [isContactOpen, setIsContactOpen] = useState(false);
+  
+  // ESTADO NUEVO: BANNER INFERIOR COLAPSABLE
+  const [isBannerExpanded, setIsBannerExpanded] = useState(false);
+
   const [isAnimating, setIsAnimating] = useState(false);
   const [animationState, setAnimationState] = useState("idle");
   const [lumberjackFrame, setLumberjackFrame] = useState(0);
@@ -176,7 +185,7 @@ function App() {
     }
   }, [activeTaskId, tasks, animationState]);
 
-  const closeAll = () => { setStoreDrawerOpen(false); setActivitiesDrawerOpen(false); setConfigDropdownOpen(false); setTycoonPanelOpen(false); };
+  const closeAll = () => { setStoreDrawerOpen(false); setActivitiesDrawerOpen(false); setConfigDropdownOpen(false); setTycoonPanelOpen(false); setIsContactOpen(false); setIsBannerExpanded(false); };
   const openStoreDrawer = () => { closeAll(); setStoreDrawerOpen(true); };
   const openActivitiesDrawer = () => { closeAll(); setActivitiesDrawerOpen(true); };
   const toggleConfig = () => { closeAll(); setConfigDropdownOpen(!configDropdownOpen); };
@@ -286,16 +295,14 @@ function App() {
     objects: { perro: perroImg, gato: gatoImg, casa: casaImg },
   };
 
-  // --- COMPONENTES DE GRÁFICOS ---
+  // --- GRÁFICOS ---
   const DonutChart = ({ tasks }) => {
       const total = tasks.length === 0 ? 1 : tasks.length;
       const completed = tasks.filter(t => t.completed).length;
       const inProgress = tasks.filter(t => t.inProgress).length;
       const pending = total - completed - inProgress;
       
-      const r = 16;
-      const c = 2 * Math.PI * r; 
-      
+      const r = 16; const c = 2 * Math.PI * r; 
       const p1 = (completed / total) * c;
       const p2 = (inProgress / total) * c;
       const p3 = (pending / total) * c;
@@ -309,12 +316,7 @@ function App() {
                    <circle cx="20" cy="20" r="16" fill="transparent" stroke="#3b82f6" strokeWidth="8" strokeDasharray={`${p2} ${c}`} strokeDashoffset={-p1} />
                    <circle cx="20" cy="20" r="16" fill="transparent" stroke="#f59e0b" strokeWidth="8" strokeDasharray={`${p3} ${c}`} strokeDashoffset={-(p1 + p2)} />
                 </svg>
-                <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="text-center">
-                        <p className="text-xl font-black text-gray-700">{tasks.length}</p>
-                        <p className="text-[8px] text-gray-400 uppercase">Total</p>
-                    </div>
-                </div>
+                <div className="absolute inset-0 flex items-center justify-center"><div className="text-center"><p className="text-xl font-black text-gray-700">{tasks.length}</p><p className="text-[8px] text-gray-400 uppercase">Total</p></div></div>
              </div>
              <div className="space-y-2 text-xs font-medium text-gray-600">
                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-green-500"></div> Terminadas ({completed})</div>
@@ -344,13 +346,13 @@ function App() {
             <div className="absolute inset-0 opacity-20" style={{backgroundImage: `url(${images.parcela})`, backgroundSize: 'cover'}}></div>
             <div className="relative z-10 bg-white/20 backdrop-blur-xl p-10 rounded-3xl shadow-2xl border border-white/40 text-center max-w-md w-full mx-4 float-anim">
                 <div className="mb-6 inline-block p-4 bg-white/30 rounded-full shadow-lg"><User size={48} className="text-white" /></div>
-                <h1 className="text-4xl font-black text-white mb-2 tracking-tight drop-shadow-md">¡Bienvenido!</h1>
-                <p className="text-indigo-100 mb-8 font-medium text-lg">Ingresa tu nombre para cargar tu parcela.</p>
+                <h1 className="text-5xl font-black text-white mb-1 tracking-tighter drop-shadow-md">YOTIP</h1>
+                <p className="text-xs text-indigo-100 uppercase tracking-widest font-bold mb-6">Your Time, Your Productivity</p>
+                <p className="text-indigo-50 mb-8 font-medium text-sm">Ingresa tu nombre para acceder a tu espacio.</p>
                 <form onSubmit={handleLogin} className="space-y-4">
                     <input autoFocus type="text" placeholder="Tu Gamertag..." value={loginName} onChange={(e) => setLoginName(e.target.value)} className="w-full px-6 py-4 rounded-xl bg-white/90 border-0 text-gray-800 font-bold text-lg placeholder-gray-400 focus:ring-4 focus:ring-indigo-400/50 transition outline-none shadow-inner text-center" />
-                    <button type="submit" disabled={!loginName.trim()} className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-400 text-white font-bold rounded-xl shadow-lg transform transition hover:scale-105 active:scale-95 text-lg">Comenzar Aventura 🚀</button>
+                    <button type="submit" disabled={!loginName.trim()} className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-400 text-white font-bold rounded-xl shadow-lg transform transition hover:scale-105 active:scale-95 text-lg">Entrar</button>
                 </form>
-                <p className="mt-6 text-xs text-white/60">Tus datos se guardan localmente por usuario.</p>
             </div>
         </div>
       );
@@ -381,14 +383,14 @@ function App() {
       </div>
 
       {/* TOAST */}
-      <div className={`fixed bottom-6 left-6 z-50 transition-all duration-500 ${toast.visible ? "translate-x-0 opacity-100" : "-translate-x-20 opacity-0"}`}>
+      <div className={`fixed top-24 left-1/2 -translate-x-1/2 z-50 transition-all duration-500 ${toast.visible ? "translate-y-0 opacity-100" : "-translate-y-10 opacity-0"}`}>
         <div className="liquid-glass px-6 py-4 flex items-center gap-4 bg-white/60 shadow-xl">
           {toast.type === "success" ? <ThumbsUp className="text-green-600"/> : toast.type === "error" ? <AlertTriangle className="text-red-600"/> : <Info className="text-blue-600"/>}
           <p className="text-sm font-bold text-gray-900">{toast.message}</p>
         </div>
       </div>
 
-      {/* MODAL */}
+      {/* MODAL TAREA */}
       {isAddTaskModalOpen && (
         <div className="fixed inset-0 bg-black/20 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-md liquid-glass p-8 pop-in shadow-2xl border border-white/60">
@@ -400,6 +402,21 @@ function App() {
               <div className="flex justify-end gap-3 pt-2"><button type="button" onClick={() => setIsAddTaskModalOpen(false)} className="px-5 py-2 text-sm font-bold text-gray-600 hover:bg-white/50 rounded-xl transition">Cancelar</button><button type="submit" className="px-5 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-lg flex items-center gap-2">Guardar <Sparkles size={16}/></button></div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* MODAL CONTACTO */}
+      {isContactOpen && (
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-md z-50 flex items-center justify-center p-4" onClick={() => setIsContactOpen(false)}>
+            <div className="w-full max-w-sm liquid-glass p-8 pop-in shadow-2xl border-t-4 border-indigo-500 text-center bg-white/70" onClick={e => e.stopPropagation()}>
+                <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4"><Mail size={32} className="text-indigo-600"/></div>
+                <h3 className="text-2xl font-black text-gray-800 mb-1">Equipo 6 YOTIP</h3>
+                <p className="text-sm text-gray-500 font-medium mb-6">Soporte y Desarrollo</p>
+                <div className="bg-white/50 p-4 rounded-xl border border-white/50 mb-6">
+                    <p className="text-indigo-600 font-bold flex items-center justify-center gap-2 text-sm"><MessageCircle size={16}/> luisarma45@gmail.com</p>
+                </div>
+                <button onClick={() => setIsContactOpen(false)} className="w-full py-3 bg-gray-800 text-white font-bold rounded-xl hover:bg-gray-900 transition">Cerrar</button>
+            </div>
         </div>
       )}
 
@@ -432,7 +449,7 @@ function App() {
         <div className="liquid-glass px-6 py-3 flex justify-between items-center shadow-xl">
           <div className="flex items-center gap-4">
             <div className="bg-gradient-to-tr from-indigo-600 to-purple-500 text-white p-2 rounded-lg shadow-lg shadow-indigo-500/30"><BarChart4 size={20}/></div>
-            <h1 className="hidden sm:block text-lg font-black text-gray-900 tracking-tight">TYCOON <span className="text-indigo-600">TAREAS</span></h1>
+            <div><h1 className="hidden sm:block text-lg font-black text-gray-900 tracking-tight leading-none">YOTIP</h1><span className="text-[8px] font-bold text-indigo-500 uppercase tracking-widest hidden sm:block">Your Time Your Productivity</span></div>
             <button onClick={toggleTycoonPanel} className="ml-2 text-xs font-bold text-gray-600 hover:text-indigo-700 bg-white/40 px-3 py-1.5 rounded-lg transition border border-white/50 hover:bg-white/80">Ver Datos</button>
           </div>
           <nav className="flex items-center gap-3">
@@ -462,21 +479,17 @@ function App() {
              <h2 className="text-3xl font-black text-gray-800 mb-6 flex items-center gap-2"><Activity className="text-indigo-600"/> Actividad de {currentUser}</h2>
              
              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 mb-6">
-                 {/* Gráfica Línea */}
                  <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col">
                      <h4 className="font-bold text-gray-600 mb-4">Actividad Semanal</h4>
                      <div className="flex-1 flex items-end justify-between gap-2 pb-4 relative"><LineChart /></div>
                      <div className="flex justify-between text-xs text-gray-400 font-bold px-2"><span>Lun</span><span>Mar</span><span>Mie</span><span>Jue</span><span>Vie</span><span>Sab</span><span>Dom</span></div>
                  </div>
-
-                 {/* Gráfica Dona */}
                  <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col items-center justify-center">
                       <h4 className="font-bold text-gray-600 mb-4 w-full text-left">Estado de Tareas</h4>
                       <DonutChart tasks={tasks} />
                  </div>
              </div>
 
-             {/* Tabla */}
              <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner overflow-hidden flex-1 flex flex-col">
                  <div className="grid grid-cols-5 gap-4 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-300/50 pb-3 mb-2">
                      <div className="flex items-center gap-1"><Calendar size={14}/> Fecha</div>
@@ -486,16 +499,10 @@ function App() {
                  </div>
                  <div className="overflow-y-auto pr-2 space-y-2">
                      {tasks.map(t => {
-                        // LÓGICA DE ESTRELLAS
-                        // 1 estrella por cada 100 monedas.
-                        // >= 500 -> 5 estrellas
-                        // >= 1000 -> 5 estrellas moradas
                         let starCount = Math.min(5, Math.max(1, Math.floor(t.reward / 100)));
                         if (t.reward >= 500) starCount = 5;
-                        
                         const isMaxLevel = t.reward >= 1000;
                         const starColor = isMaxLevel ? "text-purple-600" : "text-yellow-400";
-
                         return (
                          <div key={t.id} className="grid grid-cols-5 gap-4 items-center py-3 border-b border-gray-200/30 hover:bg-white/40 transition rounded-lg px-2">
                              <div className="text-xs font-bold text-gray-600">{t.deadline ? new Date(t.deadline).toLocaleDateString() : "Hoy"}</div>
@@ -518,8 +525,44 @@ function App() {
         </div>
       )}
 
+      {/* BANNER INFERIOR (PEEKING DRAWER) */}
+      <div 
+          className={`fixed bottom-0 left-1/2 -translate-x-1/2 w-[90%] max-w-3xl z-30 transition-transform duration-500 cubic-bezier(0.4, 0, 0.2, 1) cursor-pointer ${isBannerExpanded ? 'translate-y-[-20px]' : 'translate-y-[72%]'}`}
+          onClick={() => setIsBannerExpanded(!isBannerExpanded)}
+      >
+          <div className="liquid-glass px-6 pb-6 pt-3 shadow-2xl border-t border-white/70 bg-white/60 hover:bg-white/70 transition-colors">
+              {/* Handle */}
+              <div className="w-16 h-1.5 bg-gray-300 rounded-full mx-auto mb-4 opacity-60"></div>
+              
+              <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-3">
+                      <div className="p-2 bg-indigo-100 text-indigo-600 rounded-full"><HelpCircle size={20}/></div>
+                      <div>
+                          <p className="text-sm font-bold text-gray-800">Centro de Ayuda</p>
+                          <p className="text-xs text-gray-500">Guía rápida y soporte</p>
+                      </div>
+                  </div>
+                  <div className="transform transition-transform duration-500" style={{transform: isBannerExpanded ? 'rotate(180deg)' : 'rotate(0deg)'}}>
+                      <ChevronUp size={20} className="text-gray-400"/>
+                  </div>
+              </div>
+
+              {/* Contenido Expandido */}
+              <div className="mt-6 pt-6 border-t border-gray-200/50 flex justify-between items-center opacity-90">
+                  <div className="text-xs text-gray-600 space-y-1">
+                      <p><strong>1.</strong> Inicia tareas para activar al leñador.</p>
+                      <p><strong>2.</strong> Complétalas para ganar monedas.</p>
+                      <p><strong>3.</strong> Compra decoraciones y personaliza tu parcela.</p>
+                  </div>
+                  <button onClick={(e) => { e.stopPropagation(); setIsContactOpen(true); }} className="bg-indigo-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 transition flex items-center gap-2">
+                      Soporte <Mail size={14}/>
+                  </button>
+              </div>
+          </div>
+      </div>
+
       {/* MAIN PARCELA */}
-      <main className="pt-32 pb-10 px-4 min-h-screen flex items-center justify-center overflow-hidden">
+      <main className="pt-32 pb-20 px-4 min-h-screen flex items-center justify-center overflow-hidden">
         <div ref={parcelaRef} className="relative w-full max-w-6xl aspect-video liquid-glass p-0 shadow-2xl group overflow-hidden">
             <div className="absolute inset-0 bg-no-repeat bg-center opacity-90" style={{ backgroundImage: `url(${images.parcela})`, backgroundSize: '90%' }}></div>
             <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/10 to-transparent pointer-events-none"></div>
