@@ -105,16 +105,30 @@ function App() {
               setParcelaObjects(Array.isArray(parsed) ? parsed : []);
           } catch(e) { setParcelaObjects([]); }
 
+          // LOGICA DE CARGA DE TAREAS Y ESTADO DEL LEÑADOR (MODIFICADO)
           const savedTasks = localStorage.getItem(`${currentUser}_tasks`);
+          let loadedTasks = [];
           try { 
               const parsedTasks = JSON.parse(savedTasks);
-              setTasks(parsedTasks || []);
+              loadedTasks = parsedTasks || [];
+              setTasks(loadedTasks);
           } catch(e) { 
-              setTasks([
+              loadedTasks = [
                 { id: 1, name: "Leer 1 artículo", reward: 10, completed: false, inProgress: false, deadline: null },
                 { id: 2, name: "Organizar correo", reward: 25, completed: false, inProgress: false, deadline: null },
                 { id: 3, name: "Ejercicio 30 min", reward: 50, completed: false, inProgress: false, deadline: null },
-              ]); 
+              ];
+              setTasks(loadedTasks); 
+          }
+
+          // RESTAURAR ESTADO DEL LEÑADOR SEGÚN TAREAS ACTIVAS
+          const activeTask = loadedTasks.find(t => t.inProgress);
+          if (activeTask) {
+              setActiveTaskId(activeTask.id);
+              setAnimationState("chopping");
+          } else {
+              setActiveTaskId(null);
+              setAnimationState("idle");
           }
 
           const savedTheme = localStorage.getItem(`${currentUser}_theme`);
@@ -150,6 +164,9 @@ function App() {
           setCoins(5000);
           setParcelaObjects([]);
           setTasks([]);
+          // RESETEAR ESTADO DEL LEÑADOR AL SALIR
+          setActiveTaskId(null);
+          setAnimationState("idle");
           changeThemeColor("indigo", false);
       }
   };
@@ -176,6 +193,7 @@ function App() {
   }, [animationState]);
 
   useEffect(() => {
+    // Esta logica solo maneja transiciones, la carga inicial la maneja el primer useEffect
     const working = tasks.some(t => t.inProgress);
     if (!activeTaskId && !working && animationState === "chopping") {
       setIsAnimating(true); setAnimationState("sitting");
@@ -185,11 +203,32 @@ function App() {
     }
   }, [activeTaskId, tasks, animationState]);
 
-  const closeAll = () => { setStoreDrawerOpen(false); setActivitiesDrawerOpen(false); setConfigDropdownOpen(false); setTycoonPanelOpen(false); setIsContactOpen(false); setIsBannerExpanded(false); };
-  const openStoreDrawer = () => { closeAll(); setStoreDrawerOpen(true); };
-  const openActivitiesDrawer = () => { closeAll(); setActivitiesDrawerOpen(true); };
-  const toggleConfig = () => { closeAll(); setConfigDropdownOpen(!configDropdownOpen); };
-  const toggleTycoonPanel = () => { closeAll(); setTycoonPanelOpen(!tycoonPanelOpen); };
+  // MODIFICADO: Funciones Toggle independientes (Sin closeAll para drawers)
+  const closeAllMenus = () => { setConfigDropdownOpen(false); setTycoonPanelOpen(false); setIsContactOpen(false); setIsBannerExpanded(false); }; // Renombrado para no confundir
+  
+  const toggleStoreDrawer = () => { 
+      closeAllMenus(); 
+      setStoreDrawerOpen(!storeDrawerOpen); 
+  };
+  
+  const toggleActivitiesDrawer = () => { 
+      closeAllMenus(); 
+      setActivitiesDrawerOpen(!activitiesDrawerOpen); 
+  };
+  
+  const toggleConfig = () => { 
+      closeAllMenus(); 
+      setStoreDrawerOpen(false); // Configuracion si cierra drawers por limpieza visual
+      setActivitiesDrawerOpen(false);
+      setConfigDropdownOpen(!configDropdownOpen); 
+  };
+  
+  const toggleTycoonPanel = () => { 
+      closeAllMenus(); 
+      setStoreDrawerOpen(false);
+      setActivitiesDrawerOpen(false);
+      setTycoonPanelOpen(!tycoonPanelOpen); 
+  };
 
   const handleAddTask = (e) => {
       e.preventDefault();
@@ -205,7 +244,8 @@ function App() {
   const handleStartTask = (id) => {
       if(isAnimating) return;
       setTasks(prev => prev.map(t => t.id === id ? {...t, inProgress: true} : {...t, inProgress: false}));
-      setActiveTaskId(id); setAnimationState("chopping"); closeAll();
+      setActiveTaskId(id); setAnimationState("chopping"); 
+      // Eliminado closeAll() para que no cierre el drawer al iniciar
   };
 
   const handleCompleteTask = (id, reward) => {
@@ -367,8 +407,10 @@ function App() {
         .liquid-glass { background: rgba(255, 255, 255, 0.55); backdrop-filter: blur(24px) saturate(200%); border: 1px solid rgba(255, 255, 255, 0.6); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.1), inset 0 0 0 1px rgba(255, 255, 255, 0.2); border-radius: 24px; }
         .liquid-glass-panel { background: rgba(255, 255, 255, 0.5); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.5); border-radius: 16px; transition: all 0.2s ease; }
         .liquid-glass-panel:hover { background: rgba(255, 255, 255, 0.7); box-shadow: 0 4px 20px rgba(var(--theme-rgb), 0.2); transform: translateY(-2px); border-color: var(--theme-color-primary); }
-        .color-input-button { -webkit-appearance: none; border: 3px solid white; border-radius: 50%; width: 32px; height: 32px; cursor: pointer; padding: 0; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
-        .color-input-button::-webkit-color-swatch { border: none; }
+        /* COLOR INPUT FIX */
+        .color-circle-wrapper { width: 40px; height: 40px; border-radius: 50%; overflow: hidden; position: relative; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.2); cursor: pointer; }
+        .color-input-fix { position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; padding: 0; margin: 0; cursor: pointer; border: none; }
+        
         .parcela-object { position: absolute; transform: translate(-50%, -50%); cursor: grab; user-select: none; transition: transform 0.1s; }
         .parcela-object:active { cursor: grabbing; transform: translate(-50%, -50%) scale(0.95); }
         .house-size { width: 16rem; height: 16rem; }
@@ -413,16 +455,16 @@ function App() {
                 <h3 className="text-2xl font-black text-gray-800 mb-1">Equipo 6 YOTIP</h3>
                 <p className="text-sm text-gray-500 font-medium mb-6">Soporte y Desarrollo</p>
                 <div className="bg-white/50 p-4 rounded-xl border border-white/50 mb-6">
-                    <p className="text-indigo-600 font-bold flex items-center justify-center gap-2 text-sm"><MessageCircle size={16}/> luisarma45@gmail.com</p>
+                    <p className="text-indigo-600 font-bold flex items-center justify-center gap-2 text-sm"><MessageCircle size={16}/> soporte@YOTIP.com</p>
                 </div>
                 <button onClick={() => setIsContactOpen(false)} className="w-full py-3 bg-gray-800 text-white font-bold rounded-xl hover:bg-gray-900 transition">Cerrar</button>
             </div>
         </div>
       )}
 
-      {/* SIDEBARS */}
+      {/* SIDEBARS (LOGICA DE APERTURA MODIFICADA) */}
       <aside className={`fixed inset-y-0 left-0 w-80 liquid-glass z-40 p-6 m-4 transition-transform duration-500 ${storeDrawerOpen ? "translate-x-0" : "-translate-x-[120%]"}`}>
-        <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ShoppingCart className="text-indigo-600" /> Tienda</h3><button onClick={() => setStoreDrawerOpen(false)} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20}/></button></div>
+        <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ShoppingCart className="text-indigo-600" /> Tienda</h3><button onClick={toggleStoreDrawer} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20}/></button></div>
         <div className="p-5 rounded-2xl bg-gradient-to-br from-yellow-100/80 to-orange-100/80 border border-white/50 mb-6 shadow-sm backdrop-blur-sm"><p className="text-xs font-bold text-yellow-800 uppercase tracking-wide mb-1">Tu Saldo</p><p className="text-4xl font-black text-yellow-600 flex items-center gap-1 tracking-tighter">{coins}<DollarSign size={28}/></p></div>
         <div className="space-y-3 overflow-y-auto max-h-[60vh] pr-1">
           {storeItems.map((item, i) => (
@@ -432,8 +474,8 @@ function App() {
       </aside>
 
       <aside className={`fixed inset-y-0 right-0 w-96 liquid-glass z-40 p-6 m-4 transition-transform duration-500 ${activitiesDrawerOpen ? "translate-x-0" : "translate-x-[120%]"}`}>
-        <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ListTodo className="text-indigo-600" /> Actividades</h3><button onClick={() => setActivitiesDrawerOpen(false)} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20}/></button></div>
-        <button onClick={() => { setIsAddTaskModalOpen(true); closeAll(); }} className="w-full mb-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 transition transform active:scale-95"><Plus size={20} /> Crear Nueva Tarea</button>
+        <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ListTodo className="text-indigo-600" /> Actividades</h3><button onClick={toggleActivitiesDrawer} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20}/></button></div>
+        <button onClick={() => { setIsAddTaskModalOpen(true); closeAllMenus(); }} className="w-full mb-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 transition transform active:scale-95"><Plus size={20} /> Crear Nueva Tarea</button>
         <div className="space-y-3 overflow-y-auto max-h-[70vh] pr-1">
           {tasks.map((task) => (
             <div key={task.id} className={`relative p-4 rounded-2xl border transition-all ${task.completed ? "bg-green-50/60 border-green-200/60 opacity-70" : task.inProgress ? "bg-blue-50/80 border-blue-200 shadow-md scale-[1.02]" : "liquid-glass-panel"}`}>
@@ -453,8 +495,8 @@ function App() {
             <button onClick={toggleTycoonPanel} className="ml-2 text-xs font-bold text-gray-600 hover:text-indigo-700 bg-white/40 px-3 py-1.5 rounded-lg transition border border-white/50 hover:bg-white/80">Ver Datos</button>
           </div>
           <nav className="flex items-center gap-3">
-            <button onClick={openStoreDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-3 py-2 rounded-xl hover:bg-white/50 transition"><ShoppingCart size={18}/> <span className="hidden sm:inline">Tienda</span></button>
-            <button onClick={openActivitiesDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-3 py-2 rounded-xl hover:bg-white/50 transition"><ListTodo size={18}/> <span className="hidden sm:inline">Tareas</span></button>
+            <button onClick={toggleStoreDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-3 py-2 rounded-xl hover:bg-white/50 transition"><ShoppingCart size={18}/> <span className="hidden sm:inline">Tienda</span></button>
+            <button onClick={toggleActivitiesDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-3 py-2 rounded-xl hover:bg-white/50 transition"><ListTodo size={18}/> <span className="hidden sm:inline">Tareas</span></button>
             <div className="h-6 w-[1px] bg-gray-400/30 mx-2"></div>
             <div className="flex items-center gap-1 bg-yellow-100/50 border border-yellow-200/50 px-3 py-1.5 rounded-xl backdrop-blur-sm"><span className="font-black text-yellow-700">{coins}</span><DollarSign size={14} className="text-yellow-600"/></div>
             <button onClick={toggleConfig} className="p-2 text-gray-500 hover:text-indigo-700 transition hover:rotate-90 duration-300"><Settings size={20}/></button>
@@ -464,9 +506,23 @@ function App() {
             <div className="absolute top-full right-0 mt-4 w-64 liquid-glass p-5 shadow-2xl pop-in z-50">
               <p className="text-xs font-bold text-gray-500 uppercase mb-3 tracking-wider">Tema de color</p>
               <div className="flex gap-3 mb-4 justify-between">
-                {['indigo','pink','teal','yellow'].map(c => (<button key={c} onClick={() => changeThemeColor(c)} className={`w-10 h-10 rounded-full shadow-lg border-2 border-white ring-2 ring-transparent hover:scale-110 transition bg-${c === 'indigo' ? 'indigo-600' : c === 'pink' ? 'pink-600' : c === 'teal' ? 'teal-600' : 'yellow-600'}`}></button>))}
+                {/* FIX: Colores hardcodeados para evitar problemas de Tailwind JIT */}
+                {['indigo','pink','teal','yellow'].map(c => (
+                  <button 
+                    key={c} 
+                    onClick={() => changeThemeColor(c)} 
+                    style={{ backgroundColor: c === 'indigo' ? '#4f46e5' : c === 'pink' ? '#ec4899' : c === 'teal' ? '#0d9488' : '#ca8a04' }}
+                    className={`w-10 h-10 rounded-full shadow-lg border-2 border-white ring-2 ring-transparent hover:scale-110 transition`}
+                  ></button>
+                ))}
               </div>
-              <div className="flex items-center justify-between pt-3 border-t border-gray-400/20"><span className="text-xs font-bold text-gray-600">Personalizado</span><input type="color" onChange={(e) => changeThemeColor(e.target.value)} className="color-input-button"/></div>
+              <div className="flex items-center justify-between pt-3 border-t border-gray-400/20">
+                <span className="text-xs font-bold text-gray-600">Personalizado</span>
+                {/* FIX: Input de color perfectamente circular */}
+                <div className="color-circle-wrapper">
+                    <input type="color" onChange={(e) => changeThemeColor(e.target.value)} className="color-input-fix"/>
+                </div>
+              </div>
             </div>
           )}
         </div>
