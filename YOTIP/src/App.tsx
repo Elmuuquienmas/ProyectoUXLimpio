@@ -7,18 +7,15 @@ import {
   BarChart4,
   X,
   Plus,
-  Check,
   Zap,
   Heart,
   Cat,
   Home,
-  Palette,
   Sparkles,
   Pencil,
   AlertTriangle,
   Info,
   ThumbsUp,
-  MousePointer2,
   Trash2,
   Clock,
   User,
@@ -33,8 +30,6 @@ import {
   Upload,
   Image as ImageIcon,
   Maximize2,
-  RefreshCw,
-  Menu // Nuevo icono para menú si fuera necesario
 } from "lucide-react";
 
 // --- IMÁGENES ---
@@ -98,18 +93,19 @@ function App() {
   const [parcelaObjects, setParcelaObjects] = useState([]);
   const [tasks, setTasks] = useState([]);
 
+  // UI States
   const [storeDrawerOpen, setStoreDrawerOpen] = useState(false);
   const [activitiesDrawerOpen, setActivitiesDrawerOpen] = useState(false);
   const [configDropdownOpen, setConfigDropdownOpen] = useState(false);
   const [tycoonPanelOpen, setTycoonPanelOpen] = useState(false);
   const [isContactOpen, setIsContactOpen] = useState(false);
   const [isBannerExpanded, setIsBannerExpanded] = useState(false);
+  const [isAddTaskModalOpen, setIsAddTaskModalOpen] = useState(false);
   
   const [previewImageSrc, setPreviewImageSrc] = useState(null);
   const [isAnimating, setIsAnimating] = useState(false);
   const [animationState, setAnimationState] = useState("idle");
   const [lumberjackFrame, setLumberjackFrame] = useState(0);
-  
   const [activeTaskId, setActiveTaskId] = useState(null);
   
   // --- LÓGICA DE ARRASTRE ---
@@ -119,7 +115,8 @@ function App() {
   const parcelaRef = useRef(null);
   
   // --- LÓGICA PAN Y ZOOM ---
-  const [viewTransform, setViewTransform] = useState({ x: 0, y: 0, scale: 1 });
+  // CAMBIO: Escala inicial en 3 (300%)
+  const [viewTransform, setViewTransform] = useState({ x: 0, y: 0, scale: 3 });
   const containerRef = useRef(null);
   const lastTouchRef = useRef({ distance: null, x: 0, y: 0 });
 
@@ -127,8 +124,11 @@ function App() {
   const [taskToCompleteId, setTaskToCompleteId] = useState(null);
   const [isResetConfirming, setIsResetConfirming] = useState(false);
   const resetTimeoutRef = useRef(null);
-  const [isAddTaskModalOpen, setIsAddTaskModalOpen] = useState(false);
+  
   const [toast, setToast] = useState({ message: "", visible: false, type: "success" });
+
+  // Helper para saber si hay algún menú "grande" abierto para ocultar el header
+  const isAnyMenuOpen = storeDrawerOpen || activitiesDrawerOpen || tycoonPanelOpen || isContactOpen || isAddTaskModalOpen;
 
   const showToast = useCallback((message, type = "success") => {
     setToast({ message, visible: true, type });
@@ -408,8 +408,7 @@ function App() {
 
   // --- ZOOM Y PAN DEL MAPA ---
   const handleContainerTouchStart = (e) => {
-    // CORRECCIÓN CLAVE: Si hay un menú abierto, NO mover el mapa
-    if (storeDrawerOpen || activitiesDrawerOpen || tycoonPanelOpen || isAddTaskModalOpen || isContactOpen) return;
+    if (isAnyMenuOpen) return;
 
     if (e.touches.length === 2) {
       const dist = getDistance(e.touches);
@@ -421,8 +420,7 @@ function App() {
   };
 
   const handleContainerTouchMove = (e) => {
-    // CORRECCIÓN CLAVE: Bloquear movimiento si hay menús abiertos
-    if (isDragging || storeDrawerOpen || activitiesDrawerOpen || tycoonPanelOpen || isAddTaskModalOpen || isContactOpen) return;
+    if (isDragging || isAnyMenuOpen) return;
 
     if (e.touches.length === 2) {
       e.preventDefault();
@@ -430,7 +428,7 @@ function App() {
       const mid = getMidpoint(e.touches);
       
       const scaleFactor = dist / lastTouchRef.current.distance;
-      const newScale = Math.min(Math.max(0.5, viewTransform.scale * scaleFactor), 3); 
+      const newScale = Math.min(Math.max(0.5, viewTransform.scale * scaleFactor), 4); // Max 4x zoom
       
       const dx = mid.x - lastTouchRef.current.x;
       const dy = mid.y - lastTouchRef.current.y;
@@ -696,8 +694,10 @@ function App() {
         </div>
       </aside>
 
-      {/* HEADER CORREGIDO PARA MÓVIL */}
-      <header className="fixed top-6 left-1/2 -translate-x-1/2 w-[95%] sm:w-[90%] max-w-5xl z-[50] pointer-events-auto">
+      {/* HEADER CON ANIMACIÓN PARA OCULTARSE SI HAY MENU ABIERTO */}
+      <header 
+        className={`fixed top-6 left-1/2 -translate-x-1/2 w-[95%] sm:w-[90%] max-w-5xl z-[50] pointer-events-auto transition-transform duration-300 ease-in-out ${isAnyMenuOpen ? '-translate-y-[150%]' : 'translate-y-0'}`}
+      >
         <div className="liquid-glass px-3 sm:px-6 py-3 flex justify-between items-center shadow-xl">
           <div className="flex items-center gap-2 sm:gap-4">
             <div className="bg-gradient-to-tr from-indigo-600 to-purple-500 text-white p-2 rounded-lg shadow-lg shadow-indigo-500/30"><BarChart4 size={20}/></div>
@@ -706,11 +706,14 @@ function App() {
           </div>
           
           <nav className="flex items-center gap-1 sm:gap-3">
-            {/* Botones compactos en móvil (sin texto) */}
             <button onClick={toggleStoreDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-2 sm:px-3 py-2 rounded-xl hover:bg-white/50 transition"><ShoppingCart size={18}/> <span className="hidden sm:inline">Tienda</span></button>
             <button onClick={toggleActivitiesDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-2 sm:px-3 py-2 rounded-xl hover:bg-white/50 transition"><ListTodo size={18}/> <span className="hidden sm:inline">Tareas</span></button>
             <div className="h-6 w-[1px] bg-gray-400/30 mx-1 sm:mx-2"></div>
-            <div className="flex items-center gap-1 bg-yellow-100/50 border border-yellow-200/50 px-2 sm:px-3 py-1.5 rounded-xl backdrop-blur-sm"><span className="font-black text-yellow-700 text-sm">{coins}</span><DollarSign size={14} className="text-yellow-600"/></div>
+            
+            {/* MONEDAS CORREGIDAS: min-w-[80px] y whitespace-nowrap */}
+            <div className="flex items-center justify-center gap-1 bg-yellow-100/50 border border-yellow-200/50 px-2 sm:px-3 py-1.5 rounded-xl backdrop-blur-sm min-w-[80px] whitespace-nowrap">
+                <span className="font-black text-yellow-700 text-sm">{coins}</span><DollarSign size={14} className="text-yellow-600"/>
+            </div>
             
             <button onClick={toggleConfig} className="p-2 text-gray-500 hover:text-indigo-700 transition hover:rotate-90 duration-300"><Settings size={20}/></button>
             <button onClick={handleLogout} className="p-2 text-red-400 hover:text-red-600 bg-red-50/50 rounded-lg transition"><LogOut size={18}/></button>
@@ -731,30 +734,34 @@ function App() {
       </header>
 
       {tycoonPanelOpen && (
-        <div className="fixed inset-0 z-[60] pt-28 px-4 bg-black/10 backdrop-blur-sm transition-all" onClick={() => setTycoonPanelOpen(false)}>
-          <div className="max-w-6xl mx-auto liquid-glass p-8 pop-in shadow-2xl border-t-4 border-indigo-500 bg-white/80 h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[60] pt-10 px-4 bg-black/10 backdrop-blur-sm transition-all flex items-center justify-center" onClick={() => setTycoonPanelOpen(false)}>
+          <div className="w-full max-w-6xl liquid-glass p-8 pop-in shadow-2xl border-t-4 border-indigo-500 bg-white/80 h-[85vh] flex flex-col relative" onClick={(e) => e.stopPropagation()}>
+             
+             {/* BOTON CERRAR EXPLICITO PARA EL PANEL */}
+             <button onClick={() => setTycoonPanelOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 rounded-full hover:bg-gray-200"><X size={24}/></button>
+
              <h2 className="text-3xl font-black text-gray-800 mb-6 flex items-center gap-2"><Activity className="text-indigo-600"/> Actividad de {currentUser}</h2>
              
-             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 mb-6">
-                 <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col">
+             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 mb-6 overflow-y-auto min-h-0">
+                 <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col h-64 lg:h-auto">
                      <h4 className="font-bold text-gray-600 mb-4">Actividad Semanal</h4>
                      <div className="flex-1 flex items-end justify-between gap-2 pb-4 relative"><LineChart /></div>
                      <div className="flex justify-between text-xs text-gray-400 font-bold px-2"><span>Lun</span><span>Mar</span><span>Mie</span><span>Jue</span><span>Vie</span><span>Sab</span><span>Dom</span></div>
                  </div>
-                 <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col items-center justify-center">
+                 <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col items-center justify-center h-64 lg:h-auto">
                       <h4 className="font-bold text-gray-600 mb-4 w-full text-left">Estado de Tareas</h4>
                       <DonutChart tasks={tasks} />
                  </div>
              </div>
 
-             <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner overflow-hidden flex-1 flex flex-col">
+             <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner overflow-hidden flex-1 flex flex-col min-h-[200px]">
                  <div className="grid grid-cols-5 gap-4 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-300/50 pb-3 mb-2">
                      <div className="flex items-center gap-1"><Calendar size={14}/> Fecha</div>
                      <div className="flex items-center gap-1 col-span-2">Nombre</div>
                      <div className="flex items-center gap-1">Progreso</div>
                      <div className="flex items-center gap-1 text-right justify-end">Dificultad</div>
                  </div>
-                 <div className="overflow-y-auto pr-2 space-y-2">
+                 <div className="overflow-y-auto pr-2 space-y-2 flex-1">
                      {tasks.map(t => {
                         let starCount = Math.min(5, Math.max(1, Math.floor(t.reward / 100)));
                         if (t.reward >= 500) starCount = 5;
@@ -810,7 +817,6 @@ function App() {
           </div>
       </div>
 
-      {/* CONTENEDOR PRINCIPAL */}
       <main 
         className="pt-0 pb-0 min-h-screen w-full h-screen overflow-hidden relative flex items-center justify-center bg-gradient-to-t from-indigo-900/20 to-transparent"
         ref={containerRef}
@@ -826,7 +832,6 @@ function App() {
             }}
             className="w-full flex items-center justify-center pointer-events-auto"
         >
-            {/* AQUÍ CAMBIAMOS EL TAMAÑO DE LA PARCELA PARA QUE SEA RESPONSIVA EN ALTO (h-[75vh]) */}
             <div ref={parcelaRef} className="relative w-full h-[75vh] sm:h-[80vh] max-w-6xl aspect-video liquid-glass p-0 shadow-2xl group overflow-hidden shrink-0">
                 <div className="absolute inset-0 bg-no-repeat bg-center opacity-90" style={{ backgroundImage: `url(${images.parcela})`, backgroundSize: 'contain' }}></div>
                 <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/10 to-transparent pointer-events-none"></div>
