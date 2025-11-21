@@ -33,7 +33,8 @@ import {
   Upload,
   Image as ImageIcon,
   Maximize2,
-  RefreshCw
+  RefreshCw,
+  Menu // Nuevo icono para menú si fuera necesario
 } from "lucide-react";
 
 // --- IMÁGENES ---
@@ -73,7 +74,7 @@ const DEFAULT_TASKS = [
     { id: 3, name: "Ejercicio 30 min", reward: 50, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
 ];
 
-// --- NUEVO: Utilidad para calcular distancia entre dos dedos (Zoom) ---
+// Utilidades de Touch
 const getDistance = (touches) => {
   return Math.hypot(
     touches[0].clientX - touches[1].clientX,
@@ -81,7 +82,6 @@ const getDistance = (touches) => {
   );
 };
 
-// --- NUEVO: Utilidad para punto medio entre dos dedos (Pan) ---
 const getMidpoint = (touches) => {
   return {
     x: (touches[0].clientX + touches[1].clientX) / 2,
@@ -112,16 +112,16 @@ function App() {
   
   const [activeTaskId, setActiveTaskId] = useState(null);
   
-  // --- LÓGICA DE ARRASTRE ACTUALIZADA ---
+  // --- LÓGICA DE ARRASTRE ---
   const [isDragging, setIsDragging] = useState(false);
   const [draggedObjectId, setDraggedObjectId] = useState(null);
   const dragOffset = useRef({ x: 0, y: 0 });
-  const parcelaRef = useRef(null); // Referencia al contenedor interior
+  const parcelaRef = useRef(null);
   
-  // --- NUEVO: ESTADOS PARA PAN Y ZOOM (MOVIL) ---
+  // --- LÓGICA PAN Y ZOOM ---
   const [viewTransform, setViewTransform] = useState({ x: 0, y: 0, scale: 1 });
-  const containerRef = useRef(null); // Referencia al contenedor exterior (ventana)
-  const lastTouchRef = useRef({ distance: null, x: 0, y: 0 }); // Para rastrear movimiento previo
+  const containerRef = useRef(null);
+  const lastTouchRef = useRef({ distance: null, x: 0, y: 0 });
 
   const fileInputRef = useRef(null);
   const [taskToCompleteId, setTaskToCompleteId] = useState(null);
@@ -341,14 +341,11 @@ function App() {
       showToast("Eliminado", "info");
   };
 
-  // --- NUEVO: Manejo de Arrastre Híbrido (Mouse + Touch) para Objetos ---
+  // --- ARRASTRE OBJETOS ---
   const handleDragStart = (e, id, pos) => {
-      // Si es touch con 2 dedos, ignoramos el drag del objeto (es zoom/pan)
       if (e.type === 'touchstart' && e.touches.length > 1) return;
-
-      e.stopPropagation(); // Evitar que se mueva el mapa
+      e.stopPropagation(); 
       
-      // Prevenir comportamiento default solo si es mouse (en touch puede bloquear scroll si no se maneja bien)
       if(e.type === 'mousedown') {
         if(e.button !== 0) return;
         e.preventDefault();
@@ -356,7 +353,6 @@ function App() {
 
       if (isAnimating) return;
 
-      // Obtener coordenadas (compatible mouse/touch)
       const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
       const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
 
@@ -365,7 +361,6 @@ function App() {
       
       if (parcelaRef.current) {
         const rect = parcelaRef.current.getBoundingClientRect();
-        // Calcular offset relativo al objeto para que no salte al centro
         dragOffset.current = { 
             x: clientX - (rect.left + (rect.width * pos.left / 100)), 
             y: clientY - (rect.top + (rect.height * pos.top / 100)) 
@@ -375,14 +370,13 @@ function App() {
 
   const handleDrag = useCallback((e) => {
       if(!isDragging || !draggedObjectId || !parcelaRef.current) return;
-      e.preventDefault(); // Evitar scroll del navegador mientras arrastras objeto
+      e.preventDefault(); 
 
       const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
       const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
 
       const rect = parcelaRef.current.getBoundingClientRect();
       
-      // Calcular nueva posición en porcentaje
       let left = Math.max(0, Math.min(100, ((clientX - rect.left - dragOffset.current.x) / rect.width) * 100));
       let top = Math.max(0, Math.min(100, ((clientY - rect.top - dragOffset.current.y) / rect.height) * 100));
       
@@ -412,29 +406,31 @@ function App() {
       };
   }, [isDragging, handleDrag]);
 
-  // --- NUEVO: LÓGICA DE ZOOM Y PAN DEL MAPA (CONTENEDOR) ---
+  // --- ZOOM Y PAN DEL MAPA ---
   const handleContainerTouchStart = (e) => {
+    // CORRECCIÓN CLAVE: Si hay un menú abierto, NO mover el mapa
+    if (storeDrawerOpen || activitiesDrawerOpen || tycoonPanelOpen || isAddTaskModalOpen || isContactOpen) return;
+
     if (e.touches.length === 2) {
       const dist = getDistance(e.touches);
       const mid = getMidpoint(e.touches);
       lastTouchRef.current = { distance: dist, x: mid.x, y: mid.y };
     } else if (e.touches.length === 1 && !isDragging) {
-      // Permitir pan con un dedo si no se está arrastrando un objeto
       lastTouchRef.current = { distance: null, x: e.touches[0].clientX, y: e.touches[0].clientY };
     }
   };
 
   const handleContainerTouchMove = (e) => {
-    if (isDragging) return; // Si arrastras un perro, no muevas el mapa
+    // CORRECCIÓN CLAVE: Bloquear movimiento si hay menús abiertos
+    if (isDragging || storeDrawerOpen || activitiesDrawerOpen || tycoonPanelOpen || isAddTaskModalOpen || isContactOpen) return;
 
     if (e.touches.length === 2) {
-      // Zoom + Pan
       e.preventDefault();
       const dist = getDistance(e.touches);
       const mid = getMidpoint(e.touches);
       
       const scaleFactor = dist / lastTouchRef.current.distance;
-      const newScale = Math.min(Math.max(0.5, viewTransform.scale * scaleFactor), 3); // Limitar zoom entre 0.5x y 3x
+      const newScale = Math.min(Math.max(0.5, viewTransform.scale * scaleFactor), 3); 
       
       const dx = mid.x - lastTouchRef.current.x;
       const dy = mid.y - lastTouchRef.current.y;
@@ -447,7 +443,6 @@ function App() {
 
       lastTouchRef.current = { distance: dist, x: mid.x, y: mid.y };
     } else if (e.touches.length === 1) {
-      // Solo Pan
       const dx = e.touches[0].clientX - lastTouchRef.current.x;
       const dy = e.touches[0].clientY - lastTouchRef.current.y;
       
@@ -587,7 +582,7 @@ function App() {
           {images.lumberjack.sitting.map((src, i) => <img key={`sit-${i}`} src={src} alt="preload" />)}
       </div>
 
-      <div className={`fixed top-24 left-1/2 -translate-x-1/2 z-50 transition-all duration-500 ${toast.visible ? "translate-y-0 opacity-100" : "-translate-y-10 opacity-0"}`}>
+      <div className={`fixed top-24 left-1/2 -translate-x-1/2 z-[60] transition-all duration-500 ${toast.visible ? "translate-y-0 opacity-100" : "-translate-y-10 opacity-0"}`}>
         <div className="liquid-glass px-6 py-4 flex items-center gap-4 bg-white/60 shadow-xl">
           {toast.type === "success" ? <ThumbsUp className="text-green-600"/> : toast.type === "error" ? <AlertTriangle className="text-red-600"/> : <Info className="text-blue-600"/>}
           <p className="text-sm font-bold text-gray-900">{toast.message}</p>
@@ -595,7 +590,7 @@ function App() {
       </div>
 
       {previewImageSrc && (
-        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4" onClick={() => setPreviewImageSrc(null)}>
+        <div className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4" onClick={() => setPreviewImageSrc(null)}>
            <div className="relative max-w-3xl w-full max-h-full pop-in group" onClick={e => e.stopPropagation()}>
                <button onClick={() => setPreviewImageSrc(null)} className="absolute -top-4 -right-4 bg-red-500 text-white p-2 rounded-full shadow-lg hover:bg-red-600 transition z-10"><X size={20}/></button>
                <img src={previewImageSrc} alt="Evidencia Completa" className="w-full h-auto max-h-[80vh] object-contain rounded-2xl shadow-2xl border-2 border-white/50 bg-white" />
@@ -604,7 +599,7 @@ function App() {
       )}
 
       {isAddTaskModalOpen && (
-        <div className="fixed inset-0 bg-black/20 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-md z-[60] flex items-center justify-center p-4">
           <div className="w-full max-w-md liquid-glass p-8 pop-in shadow-2xl border border-white/60">
             <h3 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2"><Pencil className="text-indigo-600" /> Nueva Tarea</h3>
             <form onSubmit={handleAddTask} className="space-y-5">
@@ -618,7 +613,7 @@ function App() {
       )}
 
       {isContactOpen && (
-        <div className="fixed inset-0 bg-black/20 backdrop-blur-md z-50 flex items-center justify-center p-4" onClick={() => setIsContactOpen(false)}>
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-md z-[60] flex items-center justify-center p-4" onClick={() => setIsContactOpen(false)}>
             <div className="w-full max-w-sm liquid-glass p-8 pop-in shadow-2xl border-t-4 border-indigo-500 text-center bg-white/70" onClick={e => e.stopPropagation()}>
                 <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4"><Mail size={32} className="text-indigo-600"/></div>
                 <h3 className="text-2xl font-black text-gray-800 mb-1">Equipo 6 YOTIP</h3>
@@ -631,7 +626,7 @@ function App() {
         </div>
       )}
 
-      <aside className={`fixed inset-y-0 left-0 w-80 liquid-glass z-40 p-6 m-4 transition-transform duration-500 ${storeDrawerOpen ? "translate-x-0" : "-translate-x-[120%]"}`}>
+      <aside className={`fixed inset-y-0 left-0 w-80 liquid-glass z-[50] p-6 m-4 transition-transform duration-500 ${storeDrawerOpen ? "translate-x-0" : "-translate-x-[150%]"}`}>
         <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ShoppingCart className="text-indigo-600" /> Tienda</h3><button onClick={toggleStoreDrawer} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20}/></button></div>
         <div className="p-5 rounded-2xl bg-gradient-to-br from-yellow-100/80 to-orange-100/80 border border-white/50 mb-6 shadow-sm backdrop-blur-sm"><p className="text-xs font-bold text-yellow-800 uppercase tracking-wide mb-1">Tu Saldo</p><p className="text-4xl font-black text-yellow-600 flex items-center gap-1 tracking-tighter">{coins}<DollarSign size={28}/></p></div>
         <div className="space-y-3 overflow-y-auto max-h-[60vh] pr-1">
@@ -641,7 +636,7 @@ function App() {
         </div>
       </aside>
 
-      <aside className={`fixed inset-y-0 right-0 w-96 liquid-glass z-40 p-6 m-4 transition-transform duration-500 flex flex-col ${activitiesDrawerOpen ? "translate-x-0" : "translate-x-[120%]"}`}>
+      <aside className={`fixed inset-y-0 right-0 w-96 liquid-glass z-[50] p-6 m-4 transition-transform duration-500 flex flex-col ${activitiesDrawerOpen ? "translate-x-0" : "translate-x-[150%]"}`}>
         <div className="flex justify-between items-center mb-8 shrink-0"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ListTodo className="text-indigo-600" /> Actividades</h3><button onClick={toggleActivitiesDrawer} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20}/></button></div>
         <button onClick={() => { setIsAddTaskModalOpen(true); closeAllMenus(); }} className="w-full mb-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 transition transform active:scale-95 shrink-0"><Plus size={20} /> Crear Nueva Tarea</button>
         
@@ -701,21 +696,26 @@ function App() {
         </div>
       </aside>
 
-      <header className="fixed top-6 left-1/2 -translate-x-1/2 w-[90%] max-w-5xl z-30">
-        <div className="liquid-glass px-6 py-3 flex justify-between items-center shadow-xl">
-          <div className="flex items-center gap-4">
+      {/* HEADER CORREGIDO PARA MÓVIL */}
+      <header className="fixed top-6 left-1/2 -translate-x-1/2 w-[95%] sm:w-[90%] max-w-5xl z-[50] pointer-events-auto">
+        <div className="liquid-glass px-3 sm:px-6 py-3 flex justify-between items-center shadow-xl">
+          <div className="flex items-center gap-2 sm:gap-4">
             <div className="bg-gradient-to-tr from-indigo-600 to-purple-500 text-white p-2 rounded-lg shadow-lg shadow-indigo-500/30"><BarChart4 size={20}/></div>
             <div><h1 className="hidden sm:block text-lg font-black text-gray-900 tracking-tight leading-none">YOTIP</h1><span className="text-[8px] font-bold text-indigo-500 uppercase tracking-widest hidden sm:block">Your Time Your Productivity</span></div>
-            <button onClick={toggleTycoonPanel} className="ml-2 text-xs font-bold text-gray-600 hover:text-indigo-700 bg-white/40 px-3 py-1.5 rounded-lg transition border border-white/50 hover:bg-white/80">Ver Datos</button>
+            <button onClick={toggleTycoonPanel} className="hidden sm:block ml-2 text-xs font-bold text-gray-600 hover:text-indigo-700 bg-white/40 px-3 py-1.5 rounded-lg transition border border-white/50 hover:bg-white/80">Datos</button>
           </div>
-          <nav className="flex items-center gap-3">
-            <button onClick={toggleStoreDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-3 py-2 rounded-xl hover:bg-white/50 transition"><ShoppingCart size={18}/> <span className="hidden sm:inline">Tienda</span></button>
-            <button onClick={toggleActivitiesDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-3 py-2 rounded-xl hover:bg-white/50 transition"><ListTodo size={18}/> <span className="hidden sm:inline">Tareas</span></button>
-            <div className="h-6 w-[1px] bg-gray-400/30 mx-2"></div>
-            <div className="flex items-center gap-1 bg-yellow-100/50 border border-yellow-200/50 px-3 py-1.5 rounded-xl backdrop-blur-sm"><span className="font-black text-yellow-700">{coins}</span><DollarSign size={14} className="text-yellow-600"/></div>
+          
+          <nav className="flex items-center gap-1 sm:gap-3">
+            {/* Botones compactos en móvil (sin texto) */}
+            <button onClick={toggleStoreDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-2 sm:px-3 py-2 rounded-xl hover:bg-white/50 transition"><ShoppingCart size={18}/> <span className="hidden sm:inline">Tienda</span></button>
+            <button onClick={toggleActivitiesDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-2 sm:px-3 py-2 rounded-xl hover:bg-white/50 transition"><ListTodo size={18}/> <span className="hidden sm:inline">Tareas</span></button>
+            <div className="h-6 w-[1px] bg-gray-400/30 mx-1 sm:mx-2"></div>
+            <div className="flex items-center gap-1 bg-yellow-100/50 border border-yellow-200/50 px-2 sm:px-3 py-1.5 rounded-xl backdrop-blur-sm"><span className="font-black text-yellow-700 text-sm">{coins}</span><DollarSign size={14} className="text-yellow-600"/></div>
+            
             <button onClick={toggleConfig} className="p-2 text-gray-500 hover:text-indigo-700 transition hover:rotate-90 duration-300"><Settings size={20}/></button>
-            <button onClick={handleLogout} className="p-2 text-red-400 hover:text-red-600 bg-red-50/50 rounded-lg transition" title="Cerrar Sesión"><LogOut size={18}/></button>
+            <button onClick={handleLogout} className="p-2 text-red-400 hover:text-red-600 bg-red-50/50 rounded-lg transition"><LogOut size={18}/></button>
           </nav>
+
           {configDropdownOpen && (
             <div className="absolute top-full right-0 mt-4 w-64 liquid-glass p-5 shadow-2xl pop-in z-50">
               <p className="text-xs font-bold text-gray-500 uppercase mb-3 tracking-wider">Tema de color</p>
@@ -731,7 +731,7 @@ function App() {
       </header>
 
       {tycoonPanelOpen && (
-        <div className="fixed inset-0 z-20 pt-28 px-4 bg-black/10 backdrop-blur-sm transition-all" onClick={() => setTycoonPanelOpen(false)}>
+        <div className="fixed inset-0 z-[60] pt-28 px-4 bg-black/10 backdrop-blur-sm transition-all" onClick={() => setTycoonPanelOpen(false)}>
           <div className="max-w-6xl mx-auto liquid-glass p-8 pop-in shadow-2xl border-t-4 border-indigo-500 bg-white/80 h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
              <h2 className="text-3xl font-black text-gray-800 mb-6 flex items-center gap-2"><Activity className="text-indigo-600"/> Actividad de {currentUser}</h2>
              
@@ -787,7 +787,7 @@ function App() {
       )}
 
       <div 
-          className={`fixed bottom-0 left-1/2 -translate-x-1/2 w-[90%] max-w-3xl z-30 transition-transform duration-500 cubic-bezier(0.4, 0, 0.2, 1) cursor-pointer ${isBannerExpanded ? 'translate-y-[-20px]' : 'translate-y-[72%]'}`}
+          className={`fixed bottom-0 left-1/2 -translate-x-1/2 w-[95%] sm:w-[90%] max-w-3xl z-[30] transition-transform duration-500 cubic-bezier(0.4, 0, 0.2, 1) cursor-pointer ${isBannerExpanded ? 'translate-y-[-20px]' : 'translate-y-[72%]'}`}
           onClick={() => setIsBannerExpanded(!isBannerExpanded)}
       >
           <div className="liquid-glass px-6 pb-6 pt-3 shadow-2xl border-t border-white/70 bg-white/60 hover:bg-white/70 transition-colors">
@@ -810,25 +810,25 @@ function App() {
           </div>
       </div>
 
-      {/* --- NUEVO: CONTENEDOR PRINCIPAL CON EVENTOS TOUCH (VIEWPORT) --- */}
+      {/* CONTENEDOR PRINCIPAL */}
       <main 
         className="pt-0 pb-0 min-h-screen w-full h-screen overflow-hidden relative flex items-center justify-center bg-gradient-to-t from-indigo-900/20 to-transparent"
         ref={containerRef}
         onTouchStart={handleContainerTouchStart}
         onTouchMove={handleContainerTouchMove}
-        style={{ touchAction: 'none' }} // Importante para que el navegador no haga scroll nativo
+        style={{ touchAction: 'none' }}
       >
-        {/* Wrapper que recibe la transformación de ZOOM/PAN */}
         <div 
             style={{ 
                 transform: `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})`,
                 transformOrigin: 'center center',
-                transition: isDragging ? 'none' : 'transform 0.1s ease-out' // Suavizar movimiento si no arrastras
+                transition: isDragging ? 'none' : 'transform 0.1s ease-out'
             }}
-            className="w-full flex items-center justify-center"
+            className="w-full flex items-center justify-center pointer-events-auto"
         >
-            <div ref={parcelaRef} className="relative w-[800px] h-[450px] sm:w-full sm:max-w-6xl sm:aspect-video liquid-glass p-0 shadow-2xl group overflow-hidden shrink-0">
-                <div className="absolute inset-0 bg-no-repeat bg-center opacity-90" style={{ backgroundImage: `url(${images.parcela})`, backgroundSize: '90%' }}></div>
+            {/* AQUÍ CAMBIAMOS EL TAMAÑO DE LA PARCELA PARA QUE SEA RESPONSIVA EN ALTO (h-[75vh]) */}
+            <div ref={parcelaRef} className="relative w-full h-[75vh] sm:h-[80vh] max-w-6xl aspect-video liquid-glass p-0 shadow-2xl group overflow-hidden shrink-0">
+                <div className="absolute inset-0 bg-no-repeat bg-center opacity-90" style={{ backgroundImage: `url(${images.parcela})`, backgroundSize: 'contain' }}></div>
                 <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/10 to-transparent pointer-events-none"></div>
 
                 {parcelaObjects.length === 0 && animationState === "idle" && (
@@ -853,7 +853,6 @@ function App() {
                         key={obj.id}
                         className={`absolute transition-transform active:scale-95 ${isDragging && draggedObjectId === obj.id ? "z-50 cursor-grabbing scale-110" : "z-10 cursor-grab hover:z-20"}`}
                         style={{ top: `${obj.position.top}%`, left: `${obj.position.left}%`, transform: 'translate(-50%, -50%)' }}
-                        // --- NUEVO: Eventos Touch añadidos a objetos ---
                         onMouseDown={(e) => handleDragStart(e, obj.id, obj.position)}
                         onTouchStart={(e) => handleDragStart(e, obj.id, obj.position)}
                     >
