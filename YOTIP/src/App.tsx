@@ -102,6 +102,15 @@ function App() {
   const [isBannerExpanded, setIsBannerExpanded] = useState(false);
   const [isAddTaskModalOpen, setIsAddTaskModalOpen] = useState(false);
   
+  // DETECCIÓN DE MÓVIL
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const [previewImageSrc, setPreviewImageSrc] = useState(null);
   const [isAnimating, setIsAnimating] = useState(false);
   const [animationState, setAnimationState] = useState("idle");
@@ -114,9 +123,9 @@ function App() {
   const dragOffset = useRef({ x: 0, y: 0 });
   const parcelaRef = useRef(null);
   
-  // --- LÓGICA PAN Y ZOOM ---
-  // CAMBIO: Escala inicial en 3 (300%)
-  const [viewTransform, setViewTransform] = useState({ x: 0, y: 0, scale: 3 });
+  // --- LÓGICA PAN Y ZOOM (SOLO MÓVIL) ---
+  // Iniciamos centrados en coordenadas negativas para que se vea el centro del mapa gigante
+  const [viewTransform, setViewTransform] = useState({ x: -400, y: -200, scale: 1 });
   const containerRef = useRef(null);
   const lastTouchRef = useRef({ distance: null, x: 0, y: 0 });
 
@@ -127,7 +136,6 @@ function App() {
   
   const [toast, setToast] = useState({ message: "", visible: false, type: "success" });
 
-  // Helper para saber si hay algún menú "grande" abierto para ocultar el header
   const isAnyMenuOpen = storeDrawerOpen || activitiesDrawerOpen || tycoonPanelOpen || isContactOpen || isAddTaskModalOpen;
 
   const showToast = useCallback((message, type = "success") => {
@@ -406,9 +414,9 @@ function App() {
       };
   }, [isDragging, handleDrag]);
 
-  // --- ZOOM Y PAN DEL MAPA ---
+  // --- ZOOM Y PAN DEL MAPA (SOLO SI ES MÓVIL) ---
   const handleContainerTouchStart = (e) => {
-    if (isAnyMenuOpen) return;
+    if (!isMobile || isAnyMenuOpen) return;
 
     if (e.touches.length === 2) {
       const dist = getDistance(e.touches);
@@ -420,7 +428,7 @@ function App() {
   };
 
   const handleContainerTouchMove = (e) => {
-    if (isDragging || isAnyMenuOpen) return;
+    if (!isMobile || isDragging || isAnyMenuOpen) return;
 
     if (e.touches.length === 2) {
       e.preventDefault();
@@ -428,7 +436,7 @@ function App() {
       const mid = getMidpoint(e.touches);
       
       const scaleFactor = dist / lastTouchRef.current.distance;
-      const newScale = Math.min(Math.max(0.5, viewTransform.scale * scaleFactor), 4); // Max 4x zoom
+      const newScale = Math.min(Math.max(0.5, viewTransform.scale * scaleFactor), 4); 
       
       const dx = mid.x - lastTouchRef.current.x;
       const dy = mid.y - lastTouchRef.current.y;
@@ -694,7 +702,6 @@ function App() {
         </div>
       </aside>
 
-      {/* HEADER CON ANIMACIÓN PARA OCULTARSE SI HAY MENU ABIERTO */}
       <header 
         className={`fixed top-6 left-1/2 -translate-x-1/2 w-[95%] sm:w-[90%] max-w-5xl z-[50] pointer-events-auto transition-transform duration-300 ease-in-out ${isAnyMenuOpen ? '-translate-y-[150%]' : 'translate-y-0'}`}
       >
@@ -702,6 +709,7 @@ function App() {
           <div className="flex items-center gap-2 sm:gap-4">
             <div className="bg-gradient-to-tr from-indigo-600 to-purple-500 text-white p-2 rounded-lg shadow-lg shadow-indigo-500/30"><BarChart4 size={20}/></div>
             <div><h1 className="hidden sm:block text-lg font-black text-gray-900 tracking-tight leading-none">YOTIP</h1><span className="text-[8px] font-bold text-indigo-500 uppercase tracking-widest hidden sm:block">Your Time Your Productivity</span></div>
+            {/* Botón de texto para escritorio */}
             <button onClick={toggleTycoonPanel} className="hidden sm:block ml-2 text-xs font-bold text-gray-600 hover:text-indigo-700 bg-white/40 px-3 py-1.5 rounded-lg transition border border-white/50 hover:bg-white/80">Datos</button>
           </div>
           
@@ -710,11 +718,13 @@ function App() {
             <button onClick={toggleActivitiesDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-2 sm:px-3 py-2 rounded-xl hover:bg-white/50 transition"><ListTodo size={18}/> <span className="hidden sm:inline">Tareas</span></button>
             <div className="h-6 w-[1px] bg-gray-400/30 mx-1 sm:mx-2"></div>
             
-            {/* MONEDAS CORREGIDAS: min-w-[80px] y whitespace-nowrap */}
             <div className="flex items-center justify-center gap-1 bg-yellow-100/50 border border-yellow-200/50 px-2 sm:px-3 py-1.5 rounded-xl backdrop-blur-sm min-w-[80px] whitespace-nowrap">
                 <span className="font-black text-yellow-700 text-sm">{coins}</span><DollarSign size={14} className="text-yellow-600"/>
             </div>
             
+            {/* BOTÓN DE DATOS PARA MÓVIL (ICONO) */}
+            <button onClick={toggleTycoonPanel} className="sm:hidden p-2 text-gray-500 hover:text-indigo-700 transition"><BarChart4 size={20}/></button>
+
             <button onClick={toggleConfig} className="p-2 text-gray-500 hover:text-indigo-700 transition hover:rotate-90 duration-300"><Settings size={20}/></button>
             <button onClick={handleLogout} className="p-2 text-red-400 hover:text-red-600 bg-red-50/50 rounded-lg transition"><LogOut size={18}/></button>
           </nav>
@@ -737,7 +747,6 @@ function App() {
         <div className="fixed inset-0 z-[60] pt-10 px-4 bg-black/10 backdrop-blur-sm transition-all flex items-center justify-center" onClick={() => setTycoonPanelOpen(false)}>
           <div className="w-full max-w-6xl liquid-glass p-8 pop-in shadow-2xl border-t-4 border-indigo-500 bg-white/80 h-[85vh] flex flex-col relative" onClick={(e) => e.stopPropagation()}>
              
-             {/* BOTON CERRAR EXPLICITO PARA EL PANEL */}
              <button onClick={() => setTycoonPanelOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 rounded-full hover:bg-gray-200"><X size={24}/></button>
 
              <h2 className="text-3xl font-black text-gray-800 mb-6 flex items-center gap-2"><Activity className="text-indigo-600"/> Actividad de {currentUser}</h2>
@@ -826,14 +835,19 @@ function App() {
       >
         <div 
             style={{ 
-                transform: `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})`,
+                // IMPORTANTE: La transformación de pan/zoom SOLO se aplica si es móvil
+                transform: isMobile ? `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})` : 'none',
                 transformOrigin: 'center center',
                 transition: isDragging ? 'none' : 'transform 0.1s ease-out'
             }}
             className="w-full flex items-center justify-center pointer-events-auto"
         >
-            <div ref={parcelaRef} className="relative w-full h-[75vh] sm:h-[80vh] max-w-6xl aspect-video liquid-glass p-0 shadow-2xl group overflow-hidden shrink-0">
-                <div className="absolute inset-0 bg-no-repeat bg-center opacity-90" style={{ backgroundImage: `url(${images.parcela})`, backgroundSize: 'contain' }}></div>
+            {/* CLASES HÍBRIDAS:
+                Móvil: w-[1600px] h-[1000px] (Gigante fijo)
+                Escritorio (md:): w-full h-auto aspect-video (Responsivo original)
+            */}
+            <div ref={parcelaRef} className="relative transition-all duration-500 md:w-full md:max-w-6xl md:aspect-video md:h-auto w-[1600px] h-[1000px] liquid-glass p-0 shadow-2xl group overflow-hidden shrink-0">
+                <div className="absolute inset-0 bg-no-repeat bg-center opacity-90" style={{ backgroundImage: `url(${images.parcela})`, backgroundSize: 'cover' }}></div>
                 <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/10 to-transparent pointer-events-none"></div>
 
                 {parcelaObjects.length === 0 && animationState === "idle" && (
