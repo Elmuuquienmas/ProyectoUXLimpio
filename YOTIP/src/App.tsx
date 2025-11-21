@@ -29,7 +29,11 @@ import {
   HelpCircle,
   Mail,
   MessageCircle,
-  ChevronUp
+  ChevronUp,
+  Upload,
+  Image as ImageIcon,
+  Maximize2,
+  RefreshCw
 } from "lucide-react";
 
 // --- IMÁGENES ---
@@ -54,6 +58,22 @@ function hexToRgb(hex) {
   return `${r}, ${g}, ${b}`;
 }
 
+const convertFileToBase64 = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = (error) => reject(error);
+  });
+};
+
+// Añado 'archived: false' a las tareas por defecto
+const DEFAULT_TASKS = [
+    { id: 1, name: "Leer 1 artículo", reward: 10, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
+    { id: 2, name: "Organizar correo", reward: 25, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
+    { id: 3, name: "Ejercicio 30 min", reward: 50, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
+];
+
 function App() {
   // --- 1. SESIÓN PERSISTENTE ---
   const [currentUser, setCurrentUser] = useState(() => localStorage.getItem("activeUser") || null);
@@ -71,9 +91,9 @@ function App() {
   const [configDropdownOpen, setConfigDropdownOpen] = useState(false);
   const [tycoonPanelOpen, setTycoonPanelOpen] = useState(false);
   const [isContactOpen, setIsContactOpen] = useState(false);
-  
-  // ESTADO NUEVO: BANNER INFERIOR COLAPSABLE
   const [isBannerExpanded, setIsBannerExpanded] = useState(false);
+  
+  const [previewImageSrc, setPreviewImageSrc] = useState(null);
 
   const [isAnimating, setIsAnimating] = useState(false);
   const [animationState, setAnimationState] = useState("idle");
@@ -85,6 +105,12 @@ function App() {
   const dragOffset = useRef({ x: 0, y: 0 });
   const parcelaRef = useRef(null);
   
+  const fileInputRef = useRef(null);
+  const [taskToCompleteId, setTaskToCompleteId] = useState(null);
+  
+  const [isResetConfirming, setIsResetConfirming] = useState(false);
+  const resetTimeoutRef = useRef(null);
+
   const [isAddTaskModalOpen, setIsAddTaskModalOpen] = useState(false);
   const [toast, setToast] = useState({ message: "", visible: false, type: "success" });
 
@@ -105,24 +131,21 @@ function App() {
               setParcelaObjects(Array.isArray(parsed) ? parsed : []);
           } catch(e) { setParcelaObjects([]); }
 
-          // LOGICA DE CARGA DE TAREAS Y ESTADO DEL LEÑADOR (MODIFICADO)
           const savedTasks = localStorage.getItem(`${currentUser}_tasks`);
           let loadedTasks = [];
           try { 
               const parsedTasks = JSON.parse(savedTasks);
               loadedTasks = parsedTasks || [];
+              // Asegurarse de que las tareas cargadas tengan la propiedad archived (por si son antiguas)
+              loadedTasks = loadedTasks.map(t => ({ ...t, archived: t.archived || false }));
               setTasks(loadedTasks);
           } catch(e) { 
-              loadedTasks = [
-                { id: 1, name: "Leer 1 artículo", reward: 10, completed: false, inProgress: false, deadline: null },
-                { id: 2, name: "Organizar correo", reward: 25, completed: false, inProgress: false, deadline: null },
-                { id: 3, name: "Ejercicio 30 min", reward: 50, completed: false, inProgress: false, deadline: null },
-              ];
+              loadedTasks = DEFAULT_TASKS;
               setTasks(loadedTasks); 
           }
 
-          // RESTAURAR ESTADO DEL LEÑADOR SEGÚN TAREAS ACTIVAS
-          const activeTask = loadedTasks.find(t => t.inProgress);
+          // Solo activar leñador si la tarea NO está archivada
+          const activeTask = loadedTasks.find(t => t.inProgress && !t.archived);
           if (activeTask) {
               setActiveTaskId(activeTask.id);
               setAnimationState("chopping");
@@ -145,7 +168,6 @@ function App() {
   useEffect(() => { if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_objects`, JSON.stringify(parcelaObjects)); }, [parcelaObjects, currentUser, isDataLoaded]);
   useEffect(() => { if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_tasks`, JSON.stringify(tasks)); }, [tasks, currentUser, isDataLoaded]);
 
-  // --- MANEJO DE LOGIN / LOGOUT ---
   const handleLogin = (e) => {
       e.preventDefault();
       const name = loginName.trim();
@@ -164,25 +186,45 @@ function App() {
           setCoins(5000);
           setParcelaObjects([]);
           setTasks([]);
-          // RESETEAR ESTADO DEL LEÑADOR AL SALIR
           setActiveTaskId(null);
           setAnimationState("idle");
           changeThemeColor("indigo", false);
       }
   };
 
-  // --- RESTO DE LÓGICA ---
   useEffect(() => {
     const timer = setInterval(() => {
         const now = new Date();
-        setTasks(prev => prev.filter(t => {
-            if (t.completed) return true;
-            if (!t.deadline) return true;
-            return new Date(t.deadline) > now;
-        }));
+        setTasks(currentTasks => {
+            let penaltyOccurred = false;
+            let penaltyAmount = 0;
+            const remainingTasks = currentTasks.filter(t => {
+                // Ignorar si está completada, no tiene fecha O ESTÁ ARCHIVADA
+                if (t.completed || !t.deadline || t.archived) return true;
+                
+                const isExpired = new Date(t.deadline) < now;
+                if (isExpired) {
+                    if (t.inProgress) {
+                        penaltyOccurred = true;
+                        penaltyAmount += t.reward;
+                        if (t.id === activeTaskId) setActiveTaskId(null);
+                    }
+                    // Si expira, se borra (filtro false)
+                    return false; 
+                }
+                return true;
+            });
+            if (penaltyOccurred && penaltyAmount > 0) {
+                setTimeout(() => {
+                    setCoins(c => Math.max(0, c - penaltyAmount));
+                    showToast(`¡Tarea vencida! -${penaltyAmount} monedas`, "error");
+                }, 0);
+            }
+            return remainingTasks;
+        });
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [activeTaskId, showToast]);
 
   useEffect(() => {
     let interval;
@@ -193,8 +235,7 @@ function App() {
   }, [animationState]);
 
   useEffect(() => {
-    // Esta logica solo maneja transiciones, la carga inicial la maneja el primer useEffect
-    const working = tasks.some(t => t.inProgress);
+    const working = tasks.some(t => t.inProgress && !t.archived); // Solo cuenta si no está archivada
     if (!activeTaskId && !working && animationState === "chopping") {
       setIsAnimating(true); setAnimationState("sitting");
       setTimeout(() => { setAnimationState("idle"); setIsAnimating(false); }, 2000);
@@ -203,32 +244,17 @@ function App() {
     }
   }, [activeTaskId, tasks, animationState]);
 
-  // MODIFICADO: Funciones Toggle independientes (Sin closeAll para drawers)
-  const closeAllMenus = () => { setConfigDropdownOpen(false); setTycoonPanelOpen(false); setIsContactOpen(false); setIsBannerExpanded(false); }; // Renombrado para no confundir
-  
-  const toggleStoreDrawer = () => { 
-      closeAllMenus(); 
-      setStoreDrawerOpen(!storeDrawerOpen); 
-  };
-  
-  const toggleActivitiesDrawer = () => { 
-      closeAllMenus(); 
-      setActivitiesDrawerOpen(!activitiesDrawerOpen); 
-  };
-  
-  const toggleConfig = () => { 
-      closeAllMenus(); 
-      setStoreDrawerOpen(false); // Configuracion si cierra drawers por limpieza visual
-      setActivitiesDrawerOpen(false);
-      setConfigDropdownOpen(!configDropdownOpen); 
-  };
-  
-  const toggleTycoonPanel = () => { 
-      closeAllMenus(); 
-      setStoreDrawerOpen(false);
-      setActivitiesDrawerOpen(false);
-      setTycoonPanelOpen(!tycoonPanelOpen); 
-  };
+  useEffect(() => {
+    return () => {
+      if (resetTimeoutRef.current) clearTimeout(resetTimeoutRef.current);
+    };
+  }, []);
+
+  const closeAllMenus = () => { setConfigDropdownOpen(false); setTycoonPanelOpen(false); setIsContactOpen(false); setIsBannerExpanded(false); }; 
+  const toggleStoreDrawer = () => { closeAllMenus(); setStoreDrawerOpen(!storeDrawerOpen); };
+  const toggleActivitiesDrawer = () => { closeAllMenus(); setActivitiesDrawerOpen(!activitiesDrawerOpen); };
+  const toggleConfig = () => { closeAllMenus(); setStoreDrawerOpen(false); setActivitiesDrawerOpen(false); setConfigDropdownOpen(!configDropdownOpen); };
+  const toggleTycoonPanel = () => { closeAllMenus(); setStoreDrawerOpen(false); setActivitiesDrawerOpen(false); setTycoonPanelOpen(!tycoonPanelOpen); };
 
   const handleAddTask = (e) => {
       e.preventDefault();
@@ -236,7 +262,8 @@ function App() {
       const reward = parseInt(e.target.taskReward.value);
       const deadline = e.target.taskDeadline.value;
       if (!name || isNaN(reward) || reward <= 0) return showToast("Datos inválidos", "error");
-      setTasks(prev => [...prev, { id: Date.now(), name, reward, completed: false, inProgress: false, deadline: deadline || null }]);
+      // Nueva tarea nace con archived: false
+      setTasks(prev => [...prev, { id: Date.now(), name, reward, completed: false, inProgress: false, deadline: deadline || null, proofImage: null, archived: false }]);
       setIsAddTaskModalOpen(false);
       showToast("Tarea guardada", "info");
   };
@@ -245,16 +272,55 @@ function App() {
       if(isAnimating) return;
       setTasks(prev => prev.map(t => t.id === id ? {...t, inProgress: true} : {...t, inProgress: false}));
       setActiveTaskId(id); setAnimationState("chopping"); 
-      // Eliminado closeAll() para que no cierre el drawer al iniciar
   };
 
-  const handleCompleteTask = (id, reward) => {
-      if(isAnimating) return;
-      setIsAnimating(true);
-      setTasks(prev => prev.map(t => t.id === id ? {...t, completed: true, inProgress: false} : t));
-      setCoins(c => c + reward); setActiveTaskId(null);
-      showToast(`¡+${reward} monedas!`, "success");
-      setTimeout(() => setIsAnimating(false), 500);
+  const triggerFileUpload = (taskId) => {
+      if (isAnimating) return;
+      setTaskToCompleteId(taskId);
+      if (fileInputRef.current) fileInputRef.current.click();
+  };
+
+  const handleFileChange = async (e) => {
+      const file = e.target.files[0];
+      if (!file || !taskToCompleteId) return;
+      try {
+          setIsAnimating(true);
+          const base64Image = await convertFileToBase64(file);
+          const task = tasks.find(t => t.id === taskToCompleteId);
+          const reward = task ? task.reward : 0;
+          setTasks(prev => prev.map(t => t.id === taskToCompleteId ? { ...t, completed: true, inProgress: false, proofImage: base64Image } : t));
+          setCoins(c => c + reward);
+          setActiveTaskId(null);
+          showToast(`¡+${reward} monedas! Foto guardada.`, "success");
+          setTimeout(() => setIsAnimating(false), 500);
+      } catch (error) {
+          showToast("Error al procesar imagen", "error");
+          setIsAnimating(false);
+      } finally {
+          setTaskToCompleteId(null);
+          e.target.value = "";
+      }
+  };
+
+  // --- LÓGICA MODIFICADA: ARCHIVAR TODO (SOFT DELETE) ---
+  const handleDeleteAllTasks = () => {
+    if (isResetConfirming) {
+        // Segundo click: Archivar todo (Soft Delete)
+        // No borramos el array, solo marcamos 'archived: true' y quitamos 'inProgress'
+        setTasks(prev => prev.map(t => ({ ...t, archived: true, inProgress: false })));
+        
+        setActiveTaskId(null);
+        setAnimationState("idle");
+        setIsResetConfirming(false);
+        showToast("Lista limpiada. Datos guardados en historial.", "info");
+        if (resetTimeoutRef.current) clearTimeout(resetTimeoutRef.current);
+    } else {
+        setIsResetConfirming(true);
+        showToast("Click de nuevo para archivar todo.", "warning");
+        resetTimeoutRef.current = setTimeout(() => {
+            setIsResetConfirming(false);
+        }, 3000);
+    }
   };
 
   const handleBuyItem = (item) => {
@@ -335,7 +401,6 @@ function App() {
     objects: { perro: perroImg, gato: gatoImg, casa: casaImg },
   };
 
-  // --- GRÁFICOS ---
   const DonutChart = ({ tasks }) => {
       const total = tasks.length === 0 ? 1 : tasks.length;
       const completed = tasks.filter(t => t.completed).length;
@@ -377,7 +442,6 @@ function App() {
       </div>
   );
 
-  // --- LOGIN SCREEN ---
   if (!currentUser) {
       return (
         <div className="min-h-screen flex items-center justify-center bg-gray-100 relative overflow-hidden">
@@ -407,15 +471,16 @@ function App() {
         .liquid-glass { background: rgba(255, 255, 255, 0.55); backdrop-filter: blur(24px) saturate(200%); border: 1px solid rgba(255, 255, 255, 0.6); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.1), inset 0 0 0 1px rgba(255, 255, 255, 0.2); border-radius: 24px; }
         .liquid-glass-panel { background: rgba(255, 255, 255, 0.5); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.5); border-radius: 16px; transition: all 0.2s ease; }
         .liquid-glass-panel:hover { background: rgba(255, 255, 255, 0.7); box-shadow: 0 4px 20px rgba(var(--theme-rgb), 0.2); transform: translateY(-2px); border-color: var(--theme-color-primary); }
-        /* COLOR INPUT FIX */
         .color-circle-wrapper { width: 40px; height: 40px; border-radius: 50%; overflow: hidden; position: relative; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.2); cursor: pointer; }
         .color-input-fix { position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; padding: 0; margin: 0; cursor: pointer; border: none; }
-        
         .parcela-object { position: absolute; transform: translate(-50%, -50%); cursor: grab; user-select: none; transition: transform 0.1s; }
         .parcela-object:active { cursor: grabbing; transform: translate(-50%, -50%) scale(0.95); }
         .house-size { width: 16rem; height: 16rem; }
         .standard-size { width: 6rem; height: 6rem; }
       `}</style>
+
+      {/* INPUT DE ARCHIVO OCULTO */}
+      <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" style={{ display: 'none' }} />
 
       {/* PRELOADER */}
       <div className="hidden" style={{ display: 'none' }}>
@@ -431,6 +496,16 @@ function App() {
           <p className="text-sm font-bold text-gray-900">{toast.message}</p>
         </div>
       </div>
+
+      {/* NUEVO: MODAL DE PREVISUALIZACIÓN DE IMAGEN */}
+      {previewImageSrc && (
+        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4" onClick={() => setPreviewImageSrc(null)}>
+           <div className="relative max-w-3xl w-full max-h-full pop-in group" onClick={e => e.stopPropagation()}>
+               <button onClick={() => setPreviewImageSrc(null)} className="absolute -top-4 -right-4 bg-red-500 text-white p-2 rounded-full shadow-lg hover:bg-red-600 transition z-10"><X size={20}/></button>
+               <img src={previewImageSrc} alt="Evidencia Completa" className="w-full h-auto max-h-[80vh] object-contain rounded-2xl shadow-2xl border-2 border-white/50 bg-white" />
+           </div>
+        </div>
+      )}
 
       {/* MODAL TAREA */}
       {isAddTaskModalOpen && (
@@ -455,14 +530,14 @@ function App() {
                 <h3 className="text-2xl font-black text-gray-800 mb-1">Equipo 6 YOTIP</h3>
                 <p className="text-sm text-gray-500 font-medium mb-6">Soporte y Desarrollo</p>
                 <div className="bg-white/50 p-4 rounded-xl border border-white/50 mb-6">
-                    <p className="text-indigo-600 font-bold flex items-center justify-center gap-2 text-sm"><MessageCircle size={16}/> soporte@YOTIP.com</p>
+                    <p className="text-indigo-600 font-bold flex items-center justify-center gap-2 text-sm"><MessageCircle size={16}/> luisarma45@gmail.com</p>
                 </div>
                 <button onClick={() => setIsContactOpen(false)} className="w-full py-3 bg-gray-800 text-white font-bold rounded-xl hover:bg-gray-900 transition">Cerrar</button>
             </div>
         </div>
       )}
 
-      {/* SIDEBARS (LOGICA DE APERTURA MODIFICADA) */}
+      {/* SIDEBARS */}
       <aside className={`fixed inset-y-0 left-0 w-80 liquid-glass z-40 p-6 m-4 transition-transform duration-500 ${storeDrawerOpen ? "translate-x-0" : "-translate-x-[120%]"}`}>
         <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ShoppingCart className="text-indigo-600" /> Tienda</h3><button onClick={toggleStoreDrawer} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20}/></button></div>
         <div className="p-5 rounded-2xl bg-gradient-to-br from-yellow-100/80 to-orange-100/80 border border-white/50 mb-6 shadow-sm backdrop-blur-sm"><p className="text-xs font-bold text-yellow-800 uppercase tracking-wide mb-1">Tu Saldo</p><p className="text-4xl font-black text-yellow-600 flex items-center gap-1 tracking-tighter">{coins}<DollarSign size={28}/></p></div>
@@ -473,16 +548,65 @@ function App() {
         </div>
       </aside>
 
-      <aside className={`fixed inset-y-0 right-0 w-96 liquid-glass z-40 p-6 m-4 transition-transform duration-500 ${activitiesDrawerOpen ? "translate-x-0" : "translate-x-[120%]"}`}>
-        <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ListTodo className="text-indigo-600" /> Actividades</h3><button onClick={toggleActivitiesDrawer} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20}/></button></div>
-        <button onClick={() => { setIsAddTaskModalOpen(true); closeAllMenus(); }} className="w-full mb-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 transition transform active:scale-95"><Plus size={20} /> Crear Nueva Tarea</button>
-        <div className="space-y-3 overflow-y-auto max-h-[70vh] pr-1">
-          {tasks.map((task) => (
-            <div key={task.id} className={`relative p-4 rounded-2xl border transition-all ${task.completed ? "bg-green-50/60 border-green-200/60 opacity-70" : task.inProgress ? "bg-blue-50/80 border-blue-200 shadow-md scale-[1.02]" : "liquid-glass-panel"}`}>
-              <div className="flex justify-between items-start mb-3"><div><p className={`font-bold text-gray-900 ${task.completed && "line-through decoration-green-500/50"}`}>{task.name}</p><p className="text-xs font-bold text-indigo-600 flex items-center mt-1">+{task.reward} Monedas</p>{task.deadline && !task.completed && <div className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded-md bg-red-100/50 border border-red-200 text-[10px] font-bold text-red-600">Expira: {new Date(task.deadline).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>}</div>{task.inProgress && <div className="animate-pulse bg-blue-500 text-white p-1.5 rounded-lg"><Zap size={14}/></div>}</div>
-              <div className="flex gap-2 mt-2">{!task.completed ? <><button onClick={() => handleStartTask(task.id)} disabled={task.inProgress || isAnimating} className="flex-1 py-2 bg-white/60 border border-white text-gray-700 text-xs font-bold rounded-lg hover:bg-blue-50 hover:text-blue-700 transition disabled:opacity-50">{task.inProgress ? "En curso..." : "Iniciar"}</button><button onClick={() => handleCompleteTask(task.id, task.reward)} disabled={!task.inProgress || isAnimating} className="flex-1 py-2 bg-green-500 text-white text-xs font-bold rounded-lg shadow-md hover:bg-green-600 transition disabled:opacity-50">¡Hecho!</button></> : <div className="w-full py-1.5 text-center text-xs font-bold text-green-700 bg-green-100/50 border border-green-200 rounded-lg">¡Completada!</div>}</div>
+      <aside className={`fixed inset-y-0 right-0 w-96 liquid-glass z-40 p-6 m-4 transition-transform duration-500 flex flex-col ${activitiesDrawerOpen ? "translate-x-0" : "translate-x-[120%]"}`}>
+        <div className="flex justify-between items-center mb-8 shrink-0"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ListTodo className="text-indigo-600" /> Actividades</h3><button onClick={toggleActivitiesDrawer} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20}/></button></div>
+        <button onClick={() => { setIsAddTaskModalOpen(true); closeAllMenus(); }} className="w-full mb-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 transition transform active:scale-95 shrink-0"><Plus size={20} /> Crear Nueva Tarea</button>
+        
+        <div className="space-y-3 overflow-y-auto flex-1 pr-1 min-h-0">
+          {/* FILTRO IMPORTANTE: SOLO MOSTRAR TAREAS NO ARCHIVADAS */}
+          {tasks.filter(t => !t.archived).map((task) => (
+            <div key={task.id} className={`relative p-4 rounded-2xl border transition-all ${task.completed ? "bg-green-50/60 border-green-200/60 opacity-90" : task.inProgress ? "bg-slate-800 border-slate-600 text-white shadow-xl scale-[1.02]" : "liquid-glass-panel"}`}>
+              <div className="flex justify-between items-start mb-3">
+                  <div className="w-full flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                            <p className={`font-bold ${task.inProgress ? "text-white" : "text-gray-900"} ${task.completed && "line-through decoration-green-500/50"}`}>{task.name}</p>
+                            <p className={`text-xs font-bold ${task.inProgress ? "text-blue-300" : "text-indigo-600"} flex items-center mt-1`}>+{task.reward} Monedas</p>
+                            {task.deadline && !task.completed && (
+                                <div className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded-md bg-red-100/50 border border-red-200 text-[10px] font-bold text-red-600">
+                                    Expira: {new Date(task.deadline).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                                </div>
+                            )}
+                        </div>
+                        
+                        {task.completed && task.proofImage && (
+                            <div className="relative group cursor-pointer shrink-0" onClick={() => setPreviewImageSrc(task.proofImage)}>
+                                <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-xl overflow-hidden border-4 border-green-200/50 shadow-sm transition-transform group-hover:scale-105">
+                                    <img src={task.proofImage} alt="Proof" className="w-full h-full object-cover" />
+                                </div>
+                                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl"><Maximize2 size={24} className="text-white drop-shadow-lg"/></div>
+                            </div>
+                        )}
+                        {task.inProgress && !task.completed && <div className="animate-pulse bg-white/20 text-white p-1.5 rounded-lg shrink-0"><Zap size={14}/></div>}
+                  </div>
+              </div>
+              
+              <div className="flex gap-2 mt-2">
+                  {!task.completed ? (
+                    <>
+                        <button onClick={() => handleStartTask(task.id)} disabled={task.inProgress || isAnimating} className={`flex-1 py-2 border text-xs font-bold rounded-lg transition disabled:opacity-50 ${task.inProgress ? "bg-gray-700 border-gray-600 text-gray-400 cursor-not-allowed" : "bg-white/60 border-white text-gray-700 hover:bg-blue-50 hover:text-blue-700"}`}>{task.inProgress ? "En curso..." : "Iniciar"}</button>
+                        <button onClick={() => triggerFileUpload(task.id)} disabled={!task.inProgress || isAnimating} className={`flex-1 py-2 text-xs font-bold rounded-lg shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2 ${task.inProgress ? "bg-white text-gray-900 hover:bg-gray-200" : "bg-gray-300 text-gray-500 cursor-not-allowed"}`}><Upload size={14}/> ¡Hecho!</button>
+                    </>
+                  ) : (
+                    <div className="w-full py-1.5 text-center text-xs font-bold text-green-700 bg-green-100/50 border border-green-200 rounded-lg">¡Completada!</div>
+                  )}
+              </div>
             </div>
           ))}
+        </div>
+
+        {/* BOTÓN DE ELIMINAR TODO AL FINAL DEL DRAWER */}
+        <div className="mt-4 pt-4 border-t border-gray-200/30 shrink-0">
+            <button
+                onClick={handleDeleteAllTasks}
+                className={`w-full py-3 font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all duration-300 ${
+                    isResetConfirming
+                        ? "bg-red-500 text-white hover:bg-red-600 animate-pulse"
+                        : "bg-gray-200 text-gray-600 hover:bg-gray-300"
+                }`}
+            >
+                <Trash2 size={18} className={isResetConfirming ? "animate-bounce" : ""}/>
+                {isResetConfirming ? "¿Seguro? Click para confirmar" : "Eliminar todas las tareas"}
+            </button>
         </div>
       </aside>
 
@@ -506,23 +630,11 @@ function App() {
             <div className="absolute top-full right-0 mt-4 w-64 liquid-glass p-5 shadow-2xl pop-in z-50">
               <p className="text-xs font-bold text-gray-500 uppercase mb-3 tracking-wider">Tema de color</p>
               <div className="flex gap-3 mb-4 justify-between">
-                {/* FIX: Colores hardcodeados para evitar problemas de Tailwind JIT */}
                 {['indigo','pink','teal','yellow'].map(c => (
-                  <button 
-                    key={c} 
-                    onClick={() => changeThemeColor(c)} 
-                    style={{ backgroundColor: c === 'indigo' ? '#4f46e5' : c === 'pink' ? '#ec4899' : c === 'teal' ? '#0d9488' : '#ca8a04' }}
-                    className={`w-10 h-10 rounded-full shadow-lg border-2 border-white ring-2 ring-transparent hover:scale-110 transition`}
-                  ></button>
+                  <button key={c} onClick={() => changeThemeColor(c)} style={{ backgroundColor: c === 'indigo' ? '#4f46e5' : c === 'pink' ? '#ec4899' : c === 'teal' ? '#0d9488' : '#ca8a04' }} className={`w-10 h-10 rounded-full shadow-lg border-2 border-white ring-2 ring-transparent hover:scale-110 transition`}></button>
                 ))}
               </div>
-              <div className="flex items-center justify-between pt-3 border-t border-gray-400/20">
-                <span className="text-xs font-bold text-gray-600">Personalizado</span>
-                {/* FIX: Input de color perfectamente circular */}
-                <div className="color-circle-wrapper">
-                    <input type="color" onChange={(e) => changeThemeColor(e.target.value)} className="color-input-fix"/>
-                </div>
-              </div>
+              <div className="flex items-center justify-between pt-3 border-t border-gray-400/20"><span className="text-xs font-bold text-gray-600">Personalizado</span><div className="color-circle-wrapper"><input type="color" onChange={(e) => changeThemeColor(e.target.value)} className="color-input-fix"/></div></div>
             </div>
           )}
         </div>
@@ -542,6 +654,7 @@ function App() {
                  </div>
                  <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col items-center justify-center">
                       <h4 className="font-bold text-gray-600 mb-4 w-full text-left">Estado de Tareas</h4>
+                      {/* DONUT CHART USA TODAS LAS TAREAS (INCLUIDAS ARCHIVADAS) PARA MOSTRAR ESTADISTICAS TOTALES */}
                       <DonutChart tasks={tasks} />
                  </div>
              </div>
@@ -554,15 +667,20 @@ function App() {
                      <div className="flex items-center gap-1 text-right justify-end">Dificultad</div>
                  </div>
                  <div className="overflow-y-auto pr-2 space-y-2">
+                     {/* AQUI MOSTRAMOS TODAS (HISTORIAL COMPLETO) */}
                      {tasks.map(t => {
                         let starCount = Math.min(5, Math.max(1, Math.floor(t.reward / 100)));
                         if (t.reward >= 500) starCount = 5;
                         const isMaxLevel = t.reward >= 1000;
                         const starColor = isMaxLevel ? "text-purple-600" : "text-yellow-400";
                         return (
-                         <div key={t.id} className="grid grid-cols-5 gap-4 items-center py-3 border-b border-gray-200/30 hover:bg-white/40 transition rounded-lg px-2">
+                         <div key={t.id} className={`grid grid-cols-5 gap-4 items-center py-3 border-b border-gray-200/30 hover:bg-white/40 transition rounded-lg px-2 ${t.archived ? 'opacity-50 grayscale' : ''}`}>
                              <div className="text-xs font-bold text-gray-600">{t.deadline ? new Date(t.deadline).toLocaleDateString() : "Hoy"}</div>
-                             <div className="col-span-2 font-bold text-gray-800 truncate">{t.name} <span className="text-[10px] text-indigo-400 font-normal block">{currentUser}</span></div>
+                             <div className="col-span-2 font-bold text-gray-800 truncate flex items-center gap-2">
+                                {t.proofImage && <ImageIcon size={14} className="text-indigo-500"/>} 
+                                {t.name} 
+                                <span className="text-[10px] text-indigo-400 font-normal block">{currentUser} {t.archived && "(Archivado)"}</span>
+                             </div>
                              <div>
                                  <div className="flex items-center gap-2">
                                      <span className="text-xs font-bold">{t.completed ? "100%" : t.inProgress ? "50%" : "0%"}</span>
@@ -587,32 +705,21 @@ function App() {
           onClick={() => setIsBannerExpanded(!isBannerExpanded)}
       >
           <div className="liquid-glass px-6 pb-6 pt-3 shadow-2xl border-t border-white/70 bg-white/60 hover:bg-white/70 transition-colors">
-              {/* Handle */}
               <div className="w-16 h-1.5 bg-gray-300 rounded-full mx-auto mb-4 opacity-60"></div>
-              
               <div className="flex justify-between items-center">
                   <div className="flex items-center gap-3">
                       <div className="p-2 bg-indigo-100 text-indigo-600 rounded-full"><HelpCircle size={20}/></div>
-                      <div>
-                          <p className="text-sm font-bold text-gray-800">Centro de Ayuda</p>
-                          <p className="text-xs text-gray-500">Guía rápida y soporte</p>
-                      </div>
+                      <div><p className="text-sm font-bold text-gray-800">Centro de Ayuda</p><p className="text-xs text-gray-500">Guía rápida y soporte</p></div>
                   </div>
-                  <div className="transform transition-transform duration-500" style={{transform: isBannerExpanded ? 'rotate(180deg)' : 'rotate(0deg)'}}>
-                      <ChevronUp size={20} className="text-gray-400"/>
-                  </div>
+                  <div className="transform transition-transform duration-500" style={{transform: isBannerExpanded ? 'rotate(180deg)' : 'rotate(0deg)'}}><ChevronUp size={20} className="text-gray-400"/></div>
               </div>
-
-              {/* Contenido Expandido */}
               <div className="mt-6 pt-6 border-t border-gray-200/50 flex justify-between items-center opacity-90">
                   <div className="text-xs text-gray-600 space-y-1">
                       <p><strong>1.</strong> Inicia tareas para activar al leñador.</p>
-                      <p><strong>2.</strong> Complétalas para ganar monedas.</p>
-                      <p><strong>3.</strong> Compra decoraciones y personaliza tu parcela.</p>
+                      <p><strong>2.</strong> Sube tu evidencia antes de que expire.</p>
+                      <p><strong>3.</strong> ¡Cuidado! Si expira pierdes monedas.</p>
                   </div>
-                  <button onClick={(e) => { e.stopPropagation(); setIsContactOpen(true); }} className="bg-indigo-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 transition flex items-center gap-2">
-                      Soporte <Mail size={14}/>
-                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); setIsContactOpen(true); }} className="bg-indigo-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 transition flex items-center gap-2">Soporte <Mail size={14}/></button>
               </div>
           </div>
       </div>
