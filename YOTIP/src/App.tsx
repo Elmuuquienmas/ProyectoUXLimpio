@@ -67,25 +67,37 @@ const convertFileToBase64 = (file) => {
   });
 };
 
-// Añado 'archived: false' a las tareas por defecto
 const DEFAULT_TASKS = [
     { id: 1, name: "Leer 1 artículo", reward: 10, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
     { id: 2, name: "Organizar correo", reward: 25, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
     { id: 3, name: "Ejercicio 30 min", reward: 50, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
 ];
 
+// --- NUEVO: Utilidad para calcular distancia entre dos dedos (Zoom) ---
+const getDistance = (touches) => {
+  return Math.hypot(
+    touches[0].clientX - touches[1].clientX,
+    touches[0].clientY - touches[1].clientY
+  );
+};
+
+// --- NUEVO: Utilidad para punto medio entre dos dedos (Pan) ---
+const getMidpoint = (touches) => {
+  return {
+    x: (touches[0].clientX + touches[1].clientX) / 2,
+    y: (touches[0].clientY + touches[1].clientY) / 2,
+  };
+};
+
 function App() {
-  // --- 1. SESIÓN PERSISTENTE ---
   const [currentUser, setCurrentUser] = useState(() => localStorage.getItem("activeUser") || null);
   const [loginName, setLoginName] = useState("");
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
-  // --- 2. ESTADOS DEL JUEGO ---
   const [coins, setCoins] = useState(5000);
   const [parcelaObjects, setParcelaObjects] = useState([]);
   const [tasks, setTasks] = useState([]);
 
-  // --- 3. UI STATES ---
   const [storeDrawerOpen, setStoreDrawerOpen] = useState(false);
   const [activitiesDrawerOpen, setActivitiesDrawerOpen] = useState(false);
   const [configDropdownOpen, setConfigDropdownOpen] = useState(false);
@@ -94,23 +106,27 @@ function App() {
   const [isBannerExpanded, setIsBannerExpanded] = useState(false);
   
   const [previewImageSrc, setPreviewImageSrc] = useState(null);
-
   const [isAnimating, setIsAnimating] = useState(false);
   const [animationState, setAnimationState] = useState("idle");
   const [lumberjackFrame, setLumberjackFrame] = useState(0);
   
   const [activeTaskId, setActiveTaskId] = useState(null);
+  
+  // --- LÓGICA DE ARRASTRE ACTUALIZADA ---
   const [isDragging, setIsDragging] = useState(false);
   const [draggedObjectId, setDraggedObjectId] = useState(null);
   const dragOffset = useRef({ x: 0, y: 0 });
-  const parcelaRef = useRef(null);
+  const parcelaRef = useRef(null); // Referencia al contenedor interior
   
+  // --- NUEVO: ESTADOS PARA PAN Y ZOOM (MOVIL) ---
+  const [viewTransform, setViewTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const containerRef = useRef(null); // Referencia al contenedor exterior (ventana)
+  const lastTouchRef = useRef({ distance: null, x: 0, y: 0 }); // Para rastrear movimiento previo
+
   const fileInputRef = useRef(null);
   const [taskToCompleteId, setTaskToCompleteId] = useState(null);
-  
   const [isResetConfirming, setIsResetConfirming] = useState(false);
   const resetTimeoutRef = useRef(null);
-
   const [isAddTaskModalOpen, setIsAddTaskModalOpen] = useState(false);
   const [toast, setToast] = useState({ message: "", visible: false, type: "success" });
 
@@ -119,7 +135,6 @@ function App() {
     setTimeout(() => setToast((prev) => ({ ...prev, visible: false })), 4000);
   }, []);
 
-  // --- 4. LOGICA DE CARGA ---
   useEffect(() => {
       if (currentUser) {
           const savedCoins = localStorage.getItem(`${currentUser}_coins`);
@@ -136,7 +151,6 @@ function App() {
           try { 
               const parsedTasks = JSON.parse(savedTasks);
               loadedTasks = parsedTasks || [];
-              // Asegurarse de que las tareas cargadas tengan la propiedad archived (por si son antiguas)
               loadedTasks = loadedTasks.map(t => ({ ...t, archived: t.archived || false }));
               setTasks(loadedTasks);
           } catch(e) { 
@@ -144,7 +158,6 @@ function App() {
               setTasks(loadedTasks); 
           }
 
-          // Solo activar leñador si la tarea NO está archivada
           const activeTask = loadedTasks.find(t => t.inProgress && !t.archived);
           if (activeTask) {
               setActiveTaskId(activeTask.id);
@@ -163,7 +176,6 @@ function App() {
       }
   }, [currentUser]);
 
-  // --- 5. LÓGICA DE GUARDADO ---
   useEffect(() => { if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_coins`, coins.toString()); }, [coins, currentUser, isDataLoaded]);
   useEffect(() => { if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_objects`, JSON.stringify(parcelaObjects)); }, [parcelaObjects, currentUser, isDataLoaded]);
   useEffect(() => { if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_tasks`, JSON.stringify(tasks)); }, [tasks, currentUser, isDataLoaded]);
@@ -199,9 +211,7 @@ function App() {
             let penaltyOccurred = false;
             let penaltyAmount = 0;
             const remainingTasks = currentTasks.filter(t => {
-                // Ignorar si está completada, no tiene fecha O ESTÁ ARCHIVADA
                 if (t.completed || !t.deadline || t.archived) return true;
-                
                 const isExpired = new Date(t.deadline) < now;
                 if (isExpired) {
                     if (t.inProgress) {
@@ -209,7 +219,6 @@ function App() {
                         penaltyAmount += t.reward;
                         if (t.id === activeTaskId) setActiveTaskId(null);
                     }
-                    // Si expira, se borra (filtro false)
                     return false; 
                 }
                 return true;
@@ -235,7 +244,7 @@ function App() {
   }, [animationState]);
 
   useEffect(() => {
-    const working = tasks.some(t => t.inProgress && !t.archived); // Solo cuenta si no está archivada
+    const working = tasks.some(t => t.inProgress && !t.archived); 
     if (!activeTaskId && !working && animationState === "chopping") {
       setIsAnimating(true); setAnimationState("sitting");
       setTimeout(() => { setAnimationState("idle"); setIsAnimating(false); }, 2000);
@@ -262,7 +271,6 @@ function App() {
       const reward = parseInt(e.target.taskReward.value);
       const deadline = e.target.taskDeadline.value;
       if (!name || isNaN(reward) || reward <= 0) return showToast("Datos inválidos", "error");
-      // Nueva tarea nace con archived: false
       setTasks(prev => [...prev, { id: Date.now(), name, reward, completed: false, inProgress: false, deadline: deadline || null, proofImage: null, archived: false }]);
       setIsAddTaskModalOpen(false);
       showToast("Tarea guardada", "info");
@@ -302,13 +310,9 @@ function App() {
       }
   };
 
-  // --- LÓGICA MODIFICADA: ARCHIVAR TODO (SOFT DELETE) ---
   const handleDeleteAllTasks = () => {
     if (isResetConfirming) {
-        // Segundo click: Archivar todo (Soft Delete)
-        // No borramos el array, solo marcamos 'archived: true' y quitamos 'inProgress'
         setTasks(prev => prev.map(t => ({ ...t, archived: true, inProgress: false })));
-        
         setActiveTaskId(null);
         setAnimationState("idle");
         setIsResetConfirming(false);
@@ -337,29 +341,125 @@ function App() {
       showToast("Eliminado", "info");
   };
 
+  // --- NUEVO: Manejo de Arrastre Híbrido (Mouse + Touch) para Objetos ---
   const handleDragStart = (e, id, pos) => {
-      if(e.button !== 0 || isAnimating) return;
-      e.preventDefault(); e.stopPropagation();
-      setIsDragging(true); setDraggedObjectId(id);
+      // Si es touch con 2 dedos, ignoramos el drag del objeto (es zoom/pan)
+      if (e.type === 'touchstart' && e.touches.length > 1) return;
+
+      e.stopPropagation(); // Evitar que se mueva el mapa
+      
+      // Prevenir comportamiento default solo si es mouse (en touch puede bloquear scroll si no se maneja bien)
+      if(e.type === 'mousedown') {
+        if(e.button !== 0) return;
+        e.preventDefault();
+      }
+
+      if (isAnimating) return;
+
+      // Obtener coordenadas (compatible mouse/touch)
+      const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+      const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+
+      setIsDragging(true); 
+      setDraggedObjectId(id);
+      
       if (parcelaRef.current) {
         const rect = parcelaRef.current.getBoundingClientRect();
-        dragOffset.current = { x: e.clientX - (rect.left + (rect.width * pos.left / 100)), y: e.clientY - (rect.top + (rect.height * pos.top / 100)) };
+        // Calcular offset relativo al objeto para que no salte al centro
+        dragOffset.current = { 
+            x: clientX - (rect.left + (rect.width * pos.left / 100)), 
+            y: clientY - (rect.top + (rect.height * pos.top / 100)) 
+        };
       }
   };
+
   const handleDrag = useCallback((e) => {
       if(!isDragging || !draggedObjectId || !parcelaRef.current) return;
+      e.preventDefault(); // Evitar scroll del navegador mientras arrastras objeto
+
+      const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+      const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+
       const rect = parcelaRef.current.getBoundingClientRect();
-      let left = Math.max(0, Math.min(100, ((e.clientX - rect.left - dragOffset.current.x) / rect.width) * 100));
-      let top = Math.max(0, Math.min(100, ((e.clientY - rect.top - dragOffset.current.y) / rect.height) * 100));
+      
+      // Calcular nueva posición en porcentaje
+      let left = Math.max(0, Math.min(100, ((clientX - rect.left - dragOffset.current.x) / rect.width) * 100));
+      let top = Math.max(0, Math.min(100, ((clientY - rect.top - dragOffset.current.y) / rect.height) * 100));
+      
       setParcelaObjects(prev => prev.map(o => o.id === draggedObjectId ? {...o, position: {top, left}} : o));
   }, [isDragging, draggedObjectId]);
+
   const handleDragEnd = () => { setIsDragging(false); setDraggedObjectId(null); };
   
   useEffect(() => {
-      if(isDragging) { window.addEventListener('mousemove', handleDrag); window.addEventListener('mouseup', handleDragEnd); }
-      else { window.removeEventListener('mousemove', handleDrag); window.removeEventListener('mouseup', handleDragEnd); }
-      return () => { window.removeEventListener('mousemove', handleDrag); window.removeEventListener('mouseup', handleDragEnd); };
+      if(isDragging) { 
+          window.addEventListener('mousemove', handleDrag); 
+          window.addEventListener('mouseup', handleDragEnd);
+          window.addEventListener('touchmove', handleDrag, { passive: false }); 
+          window.addEventListener('touchend', handleDragEnd);
+      }
+      else { 
+          window.removeEventListener('mousemove', handleDrag); 
+          window.removeEventListener('mouseup', handleDragEnd);
+          window.removeEventListener('touchmove', handleDrag); 
+          window.removeEventListener('touchend', handleDragEnd);
+      }
+      return () => { 
+          window.removeEventListener('mousemove', handleDrag); 
+          window.removeEventListener('mouseup', handleDragEnd);
+          window.removeEventListener('touchmove', handleDrag); 
+          window.removeEventListener('touchend', handleDragEnd);
+      };
   }, [isDragging, handleDrag]);
+
+  // --- NUEVO: LÓGICA DE ZOOM Y PAN DEL MAPA (CONTENEDOR) ---
+  const handleContainerTouchStart = (e) => {
+    if (e.touches.length === 2) {
+      const dist = getDistance(e.touches);
+      const mid = getMidpoint(e.touches);
+      lastTouchRef.current = { distance: dist, x: mid.x, y: mid.y };
+    } else if (e.touches.length === 1 && !isDragging) {
+      // Permitir pan con un dedo si no se está arrastrando un objeto
+      lastTouchRef.current = { distance: null, x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+  };
+
+  const handleContainerTouchMove = (e) => {
+    if (isDragging) return; // Si arrastras un perro, no muevas el mapa
+
+    if (e.touches.length === 2) {
+      // Zoom + Pan
+      e.preventDefault();
+      const dist = getDistance(e.touches);
+      const mid = getMidpoint(e.touches);
+      
+      const scaleFactor = dist / lastTouchRef.current.distance;
+      const newScale = Math.min(Math.max(0.5, viewTransform.scale * scaleFactor), 3); // Limitar zoom entre 0.5x y 3x
+      
+      const dx = mid.x - lastTouchRef.current.x;
+      const dy = mid.y - lastTouchRef.current.y;
+
+      setViewTransform(prev => ({
+        scale: newScale,
+        x: prev.x + dx,
+        y: prev.y + dy
+      }));
+
+      lastTouchRef.current = { distance: dist, x: mid.x, y: mid.y };
+    } else if (e.touches.length === 1) {
+      // Solo Pan
+      const dx = e.touches[0].clientX - lastTouchRef.current.x;
+      const dy = e.touches[0].clientY - lastTouchRef.current.y;
+      
+      setViewTransform(prev => ({
+        ...prev,
+        x: prev.x + dx,
+        y: prev.y + dy
+      }));
+      
+      lastTouchRef.current = { ...lastTouchRef.current, x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+  };
 
   const changeThemeColor = (color, save = true) => {
       const colors = {
@@ -463,7 +563,7 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen relative font-sans text-gray-800 transition-colors duration-700" style={{ backgroundColor: 'var(--theme-color-bg)' }}>
+    <div className="min-h-screen relative font-sans text-gray-800 transition-colors duration-700 overflow-hidden" style={{ backgroundColor: 'var(--theme-color-bg)' }}>
       <style>{`
         @keyframes popIn { 0% { transform: scale(0.9); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
         .pop-in { animation: popIn 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
@@ -479,17 +579,14 @@ function App() {
         .standard-size { width: 6rem; height: 6rem; }
       `}</style>
 
-      {/* INPUT DE ARCHIVO OCULTO */}
       <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" style={{ display: 'none' }} />
 
-      {/* PRELOADER */}
       <div className="hidden" style={{ display: 'none' }}>
           <img src={images.lumberjack.idle} alt="preload" />
           {images.lumberjack.chopping.map((src, i) => <img key={`chop-${i}`} src={src} alt="preload" />)}
           {images.lumberjack.sitting.map((src, i) => <img key={`sit-${i}`} src={src} alt="preload" />)}
       </div>
 
-      {/* TOAST */}
       <div className={`fixed top-24 left-1/2 -translate-x-1/2 z-50 transition-all duration-500 ${toast.visible ? "translate-y-0 opacity-100" : "-translate-y-10 opacity-0"}`}>
         <div className="liquid-glass px-6 py-4 flex items-center gap-4 bg-white/60 shadow-xl">
           {toast.type === "success" ? <ThumbsUp className="text-green-600"/> : toast.type === "error" ? <AlertTriangle className="text-red-600"/> : <Info className="text-blue-600"/>}
@@ -497,7 +594,6 @@ function App() {
         </div>
       </div>
 
-      {/* NUEVO: MODAL DE PREVISUALIZACIÓN DE IMAGEN */}
       {previewImageSrc && (
         <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4" onClick={() => setPreviewImageSrc(null)}>
            <div className="relative max-w-3xl w-full max-h-full pop-in group" onClick={e => e.stopPropagation()}>
@@ -507,7 +603,6 @@ function App() {
         </div>
       )}
 
-      {/* MODAL TAREA */}
       {isAddTaskModalOpen && (
         <div className="fixed inset-0 bg-black/20 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-md liquid-glass p-8 pop-in shadow-2xl border border-white/60">
@@ -522,7 +617,6 @@ function App() {
         </div>
       )}
 
-      {/* MODAL CONTACTO */}
       {isContactOpen && (
         <div className="fixed inset-0 bg-black/20 backdrop-blur-md z-50 flex items-center justify-center p-4" onClick={() => setIsContactOpen(false)}>
             <div className="w-full max-w-sm liquid-glass p-8 pop-in shadow-2xl border-t-4 border-indigo-500 text-center bg-white/70" onClick={e => e.stopPropagation()}>
@@ -537,7 +631,6 @@ function App() {
         </div>
       )}
 
-      {/* SIDEBARS */}
       <aside className={`fixed inset-y-0 left-0 w-80 liquid-glass z-40 p-6 m-4 transition-transform duration-500 ${storeDrawerOpen ? "translate-x-0" : "-translate-x-[120%]"}`}>
         <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ShoppingCart className="text-indigo-600" /> Tienda</h3><button onClick={toggleStoreDrawer} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20}/></button></div>
         <div className="p-5 rounded-2xl bg-gradient-to-br from-yellow-100/80 to-orange-100/80 border border-white/50 mb-6 shadow-sm backdrop-blur-sm"><p className="text-xs font-bold text-yellow-800 uppercase tracking-wide mb-1">Tu Saldo</p><p className="text-4xl font-black text-yellow-600 flex items-center gap-1 tracking-tighter">{coins}<DollarSign size={28}/></p></div>
@@ -553,7 +646,6 @@ function App() {
         <button onClick={() => { setIsAddTaskModalOpen(true); closeAllMenus(); }} className="w-full mb-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 transition transform active:scale-95 shrink-0"><Plus size={20} /> Crear Nueva Tarea</button>
         
         <div className="space-y-3 overflow-y-auto flex-1 pr-1 min-h-0">
-          {/* FILTRO IMPORTANTE: SOLO MOSTRAR TAREAS NO ARCHIVADAS */}
           {tasks.filter(t => !t.archived).map((task) => (
             <div key={task.id} className={`relative p-4 rounded-2xl border transition-all ${task.completed ? "bg-green-50/60 border-green-200/60 opacity-90" : task.inProgress ? "bg-slate-800 border-slate-600 text-white shadow-xl scale-[1.02]" : "liquid-glass-panel"}`}>
               <div className="flex justify-between items-start mb-3">
@@ -594,7 +686,6 @@ function App() {
           ))}
         </div>
 
-        {/* BOTÓN DE ELIMINAR TODO AL FINAL DEL DRAWER */}
         <div className="mt-4 pt-4 border-t border-gray-200/30 shrink-0">
             <button
                 onClick={handleDeleteAllTasks}
@@ -610,7 +701,6 @@ function App() {
         </div>
       </aside>
 
-      {/* HEADER */}
       <header className="fixed top-6 left-1/2 -translate-x-1/2 w-[90%] max-w-5xl z-30">
         <div className="liquid-glass px-6 py-3 flex justify-between items-center shadow-xl">
           <div className="flex items-center gap-4">
@@ -640,7 +730,6 @@ function App() {
         </div>
       </header>
 
-      {/* PANEL DATOS (DASHBOARD) */}
       {tycoonPanelOpen && (
         <div className="fixed inset-0 z-20 pt-28 px-4 bg-black/10 backdrop-blur-sm transition-all" onClick={() => setTycoonPanelOpen(false)}>
           <div className="max-w-6xl mx-auto liquid-glass p-8 pop-in shadow-2xl border-t-4 border-indigo-500 bg-white/80 h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -654,7 +743,6 @@ function App() {
                  </div>
                  <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col items-center justify-center">
                       <h4 className="font-bold text-gray-600 mb-4 w-full text-left">Estado de Tareas</h4>
-                      {/* DONUT CHART USA TODAS LAS TAREAS (INCLUIDAS ARCHIVADAS) PARA MOSTRAR ESTADISTICAS TOTALES */}
                       <DonutChart tasks={tasks} />
                  </div>
              </div>
@@ -667,7 +755,6 @@ function App() {
                      <div className="flex items-center gap-1 text-right justify-end">Dificultad</div>
                  </div>
                  <div className="overflow-y-auto pr-2 space-y-2">
-                     {/* AQUI MOSTRAMOS TODAS (HISTORIAL COMPLETO) */}
                      {tasks.map(t => {
                         let starCount = Math.min(5, Math.max(1, Math.floor(t.reward / 100)));
                         if (t.reward >= 500) starCount = 5;
@@ -699,7 +786,6 @@ function App() {
         </div>
       )}
 
-      {/* BANNER INFERIOR (PEEKING DRAWER) */}
       <div 
           className={`fixed bottom-0 left-1/2 -translate-x-1/2 w-[90%] max-w-3xl z-30 transition-transform duration-500 cubic-bezier(0.4, 0, 0.2, 1) cursor-pointer ${isBannerExpanded ? 'translate-y-[-20px]' : 'translate-y-[72%]'}`}
           onClick={() => setIsBannerExpanded(!isBannerExpanded)}
@@ -724,46 +810,64 @@ function App() {
           </div>
       </div>
 
-      {/* MAIN PARCELA */}
-      <main className="pt-32 pb-20 px-4 min-h-screen flex items-center justify-center overflow-hidden">
-        <div ref={parcelaRef} className="relative w-full max-w-6xl aspect-video liquid-glass p-0 shadow-2xl group overflow-hidden">
-            <div className="absolute inset-0 bg-no-repeat bg-center opacity-90" style={{ backgroundImage: `url(${images.parcela})`, backgroundSize: '90%' }}></div>
-            <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/10 to-transparent pointer-events-none"></div>
+      {/* --- NUEVO: CONTENEDOR PRINCIPAL CON EVENTOS TOUCH (VIEWPORT) --- */}
+      <main 
+        className="pt-0 pb-0 min-h-screen w-full h-screen overflow-hidden relative flex items-center justify-center bg-gradient-to-t from-indigo-900/20 to-transparent"
+        ref={containerRef}
+        onTouchStart={handleContainerTouchStart}
+        onTouchMove={handleContainerTouchMove}
+        style={{ touchAction: 'none' }} // Importante para que el navegador no haga scroll nativo
+      >
+        {/* Wrapper que recibe la transformación de ZOOM/PAN */}
+        <div 
+            style={{ 
+                transform: `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})`,
+                transformOrigin: 'center center',
+                transition: isDragging ? 'none' : 'transform 0.1s ease-out' // Suavizar movimiento si no arrastras
+            }}
+            className="w-full flex items-center justify-center"
+        >
+            <div ref={parcelaRef} className="relative w-[800px] h-[450px] sm:w-full sm:max-w-6xl sm:aspect-video liquid-glass p-0 shadow-2xl group overflow-hidden shrink-0">
+                <div className="absolute inset-0 bg-no-repeat bg-center opacity-90" style={{ backgroundImage: `url(${images.parcela})`, backgroundSize: '90%' }}></div>
+                <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/10 to-transparent pointer-events-none"></div>
 
-            {parcelaObjects.length === 0 && animationState === "idle" && (
-                <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none"><div className="liquid-glass px-8 py-6 text-center animate-pulse bg-white/60"><Home size={48} className="mx-auto text-indigo-600 mb-2 opacity-80"/><h2 className="text-xl font-black text-gray-800">Parcela Vacía</h2><p className="text-sm text-gray-600 font-medium">Ve a la tienda y comienza a decorar</p></div></div>
-            )}
+                {parcelaObjects.length === 0 && animationState === "idle" && (
+                    <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none"><div className="liquid-glass px-8 py-6 text-center animate-pulse bg-white/60"><Home size={48} className="mx-auto text-indigo-600 mb-2 opacity-80"/><h2 className="text-xl font-black text-gray-800">Parcela Vacía</h2><p className="text-sm text-gray-600 font-medium">Ve a la tienda y comienza a decorar</p></div></div>
+                )}
 
-            <div className="absolute bottom-[10%] left-1/2 -translate-x-1/2 z-20 pointer-events-none transition-all duration-500">
-                <div className="relative">
-                    <img key={getLumberjackImage()} src={getLumberjackImage()} alt="Leñador" className="h-32 object-contain drop-shadow-2xl" style={{ imageRendering: "pixelated" }} />
-                    <div className="absolute -top-14 left-1/2 -translate-x-1/2 bg-white/80 backdrop-blur px-4 py-1 rounded-xl shadow-lg border-2 border-white transform hover:scale-110 transition flex flex-col items-center">
-                        <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Jugador</span>
-                        <span className="text-sm font-black text-gray-800 leading-none pb-1">{currentUser}</span>
-                    </div>
-                    <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur px-3 py-1 rounded-full shadow-lg text-[10px] font-bold text-white whitespace-nowrap flex items-center gap-1 border border-white/20">
-                        {animationState === "idle" && <>💤 Esperando...</>}{animationState === "chopping" && <><Zap size={10} className="text-yellow-400"/> Trabajando</>}{animationState === "sitting" && <><Sparkles size={10} className="text-indigo-300"/> Descansando</>}
+                <div className="absolute bottom-[10%] left-1/2 -translate-x-1/2 z-20 pointer-events-none transition-all duration-500">
+                    <div className="relative">
+                        <img key={getLumberjackImage()} src={getLumberjackImage()} alt="Leñador" className="h-32 object-contain drop-shadow-2xl" style={{ imageRendering: "pixelated" }} />
+                        <div className="absolute -top-14 left-1/2 -translate-x-1/2 bg-white/80 backdrop-blur px-4 py-1 rounded-xl shadow-lg border-2 border-white transform hover:scale-110 transition flex flex-col items-center">
+                            <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Jugador</span>
+                            <span className="text-sm font-black text-gray-800 leading-none pb-1">{currentUser}</span>
+                        </div>
+                        <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur px-3 py-1 rounded-full shadow-lg text-[10px] font-bold text-white whitespace-nowrap flex items-center gap-1 border border-white/20">
+                            {animationState === "idle" && <>💤 Esperando...</>}{animationState === "chopping" && <><Zap size={10} className="text-yellow-400"/> Trabajando</>}{animationState === "sitting" && <><Sparkles size={10} className="text-indigo-300"/> Descansando</>}
+                        </div>
                     </div>
                 </div>
+
+                {parcelaObjects.map((obj) => (
+                    <div 
+                        key={obj.id}
+                        className={`absolute transition-transform active:scale-95 ${isDragging && draggedObjectId === obj.id ? "z-50 cursor-grabbing scale-110" : "z-10 cursor-grab hover:z-20"}`}
+                        style={{ top: `${obj.position.top}%`, left: `${obj.position.left}%`, transform: 'translate(-50%, -50%)' }}
+                        // --- NUEVO: Eventos Touch añadidos a objetos ---
+                        onMouseDown={(e) => handleDragStart(e, obj.id, obj.position)}
+                        onTouchStart={(e) => handleDragStart(e, obj.id, obj.position)}
+                    >
+                        <div className="relative group/obj">
+                            <img src={images.objects[obj.objectId]} className={`${obj.objectId === "casa" ? "h-48 drop-shadow-2xl" : "h-20 drop-shadow-xl"} object-contain transition filter group-hover/obj:brightness-110`} style={{ imageRendering: "pixelated" }} draggable="false" />
+                            {!isDragging && (
+                                <div className="absolute -top-8 left-1/2 -translate-x-1/2 flex gap-1 opacity-0 group-hover/obj:opacity-100 transition-all transform translate-y-2 group-hover/obj:translate-y-0">
+                                    <button onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()} onClick={(e) => {e.stopPropagation(); removeParcelaObject(obj.id)}} className="bg-red-500 text-white p-1.5 rounded-full shadow-lg hover:bg-red-600 transition border-2 border-white"><X size={12}/></button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                ))}
             </div>
-
-            {parcelaObjects.map((obj) => (
-                <div 
-                    key={obj.id}
-                    className={`absolute transition-transform active:scale-95 ${isDragging && draggedObjectId === obj.id ? "z-50 cursor-grabbing scale-110" : "z-10 cursor-grab hover:z-20"}`}
-                    style={{ top: `${obj.position.top}%`, left: `${obj.position.left}%`, transform: 'translate(-50%, -50%)' }}
-                    onMouseDown={(e) => handleDragStart(e, obj.id, obj.position)}
-                >
-                    <div className="relative group/obj">
-                        <img src={images.objects[obj.objectId]} className={`${obj.objectId === "casa" ? "h-48 drop-shadow-2xl" : "h-20 drop-shadow-xl"} object-contain transition filter group-hover/obj:brightness-110`} style={{ imageRendering: "pixelated" }} draggable="false" />
-                        {!isDragging && (
-                            <div className="absolute -top-8 left-1/2 -translate-x-1/2 flex gap-1 opacity-0 group-hover/obj:opacity-100 transition-all transform translate-y-2 group-hover/obj:translate-y-0">
-                                <button onMouseDown={(e) => e.stopPropagation()} onClick={(e) => {e.stopPropagation(); removeParcelaObject(obj.id)}} className="bg-red-500 text-white p-1.5 rounded-full shadow-lg hover:bg-red-600 transition border-2 border-white"><X size={12}/></button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            ))}
         </div>
       </main>
     </div>
