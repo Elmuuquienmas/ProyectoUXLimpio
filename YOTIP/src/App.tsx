@@ -530,7 +530,7 @@ function App() {
                 <h3 className="text-2xl font-black text-gray-800 mb-1">Equipo 6 YOTIP</h3>
                 <p className="text-sm text-gray-500 font-medium mb-6">Soporte y Desarrollo</p>
                 <div className="bg-white/50 p-4 rounded-xl border border-white/50 mb-6">
-                    <p className="text-indigo-600 font-bold flex items-center justify-center gap-2 text-sm"><MessageCircle size={16}/> luisarma45@gmail.com</p>
+                    <p className="text-indigo-600 font-bold flex items-center justify-center gap-2 text-sm"><MessageCircle size={16}/> soporte@yotip.com</p>
                 </div>
                 <button onClick={() => setIsContactOpen(false)} className="w-full py-3 bg-gray-800 text-white font-bold rounded-xl hover:bg-gray-900 transition">Cerrar</button>
             </div>
