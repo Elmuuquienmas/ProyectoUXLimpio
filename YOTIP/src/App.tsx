@@ -54,11 +54,45 @@ function hexToRgb(hex) {
   return `${r}, ${g}, ${b}`;
 }
 
-const convertFileToBase64 = (file) => {
+// --- NUEVO: FUNCIÓN DE COMPRESIÓN DE IMÁGENES ---
+// Esto evita que la pantalla se ponga blanca por falta de memoria
+const compressImage = (file) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 800; // Reducimos a un ancho máximo de 800px
+        const MAX_HEIGHT = 800;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // Convertimos a JPEG con calidad 0.7 (70%)
+        // Esto reduce una foto de 10MB a unos 100KB
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.onerror = (error) => reject(error);
+    };
     reader.onerror = (error) => reject(error);
   });
 };
@@ -124,7 +158,6 @@ function App() {
   const parcelaRef = useRef(null);
   
   // --- LÓGICA PAN Y ZOOM (SOLO MÓVIL) ---
-  // Iniciamos centrados en coordenadas negativas para que se vea el centro del mapa gigante
   const [viewTransform, setViewTransform] = useState({ x: -400, y: -200, scale: 1 });
   const containerRef = useRef(null);
   const lastTouchRef = useRef({ distance: null, x: 0, y: 0 });
@@ -184,9 +217,29 @@ function App() {
       }
   }, [currentUser]);
 
-  useEffect(() => { if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_coins`, coins.toString()); }, [coins, currentUser, isDataLoaded]);
-  useEffect(() => { if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_objects`, JSON.stringify(parcelaObjects)); }, [parcelaObjects, currentUser, isDataLoaded]);
-  useEffect(() => { if (currentUser && isDataLoaded) localStorage.setItem(`${currentUser}_tasks`, JSON.stringify(tasks)); }, [tasks, currentUser, isDataLoaded]);
+  // --- GUARDADO PROTEGIDO (TRY/CATCH) ---
+  useEffect(() => { 
+      if (currentUser && isDataLoaded) {
+          try { localStorage.setItem(`${currentUser}_coins`, coins.toString()); } catch(e) { console.error("Error saving coins", e); }
+      }
+  }, [coins, currentUser, isDataLoaded]);
+
+  useEffect(() => { 
+      if (currentUser && isDataLoaded) {
+          try { localStorage.setItem(`${currentUser}_objects`, JSON.stringify(parcelaObjects)); } catch(e) { console.error("Error saving objects", e); }
+      }
+  }, [parcelaObjects, currentUser, isDataLoaded]);
+
+  useEffect(() => { 
+      if (currentUser && isDataLoaded) {
+          try { 
+            localStorage.setItem(`${currentUser}_tasks`, JSON.stringify(tasks)); 
+          } catch(e) { 
+            console.error("Error saving tasks (Storage Full?)", e); 
+            showToast("¡Almacenamiento lleno! Borra tareas antiguas.", "error");
+          }
+      }
+  }, [tasks, currentUser, isDataLoaded, showToast]);
 
   const handleLogin = (e) => {
       e.preventDefault();
@@ -301,16 +354,22 @@ function App() {
       if (!file || !taskToCompleteId) return;
       try {
           setIsAnimating(true);
-          const base64Image = await convertFileToBase64(file);
+          // USAMOS LA NUEVA FUNCIÓN DE COMPRESIÓN AQUÍ
+          const base64Image = await compressImage(file);
+          
           const task = tasks.find(t => t.id === taskToCompleteId);
           const reward = task ? task.reward : 0;
+          
           setTasks(prev => prev.map(t => t.id === taskToCompleteId ? { ...t, completed: true, inProgress: false, proofImage: base64Image } : t));
           setCoins(c => c + reward);
+          
           setActiveTaskId(null);
           showToast(`¡+${reward} monedas! Foto guardada.`, "success");
+          
           setTimeout(() => setIsAnimating(false), 500);
       } catch (error) {
-          showToast("Error al procesar imagen", "error");
+          console.error(error);
+          showToast("Error: La imagen es muy pesada o inválida.", "error");
           setIsAnimating(false);
       } finally {
           setTaskToCompleteId(null);
@@ -709,7 +768,7 @@ function App() {
           <div className="flex items-center gap-2 sm:gap-4">
             <div className="bg-gradient-to-tr from-indigo-600 to-purple-500 text-white p-2 rounded-lg shadow-lg shadow-indigo-500/30"><BarChart4 size={20}/></div>
             <div><h1 className="hidden sm:block text-lg font-black text-gray-900 tracking-tight leading-none">YOTIP</h1><span className="text-[8px] font-bold text-indigo-500 uppercase tracking-widest hidden sm:block">Your Time Your Productivity</span></div>
-            {/* Botón de texto para escritorio */}
+            {/* BOTÓN DE DATOS (SOLO ESCRITORIO) */}
             <button onClick={toggleTycoonPanel} className="hidden sm:block ml-2 text-xs font-bold text-gray-600 hover:text-indigo-700 bg-white/40 px-3 py-1.5 rounded-lg transition border border-white/50 hover:bg-white/80">Datos</button>
           </div>
           
@@ -722,7 +781,7 @@ function App() {
                 <span className="font-black text-yellow-700 text-sm">{coins}</span><DollarSign size={14} className="text-yellow-600"/>
             </div>
             
-            {/* BOTÓN DE DATOS PARA MÓVIL (ICONO) */}
+            {/* BOTÓN DE DATOS (SOLO MÓVIL) */}
             <button onClick={toggleTycoonPanel} className="sm:hidden p-2 text-gray-500 hover:text-indigo-700 transition"><BarChart4 size={20}/></button>
 
             <button onClick={toggleConfig} className="p-2 text-gray-500 hover:text-indigo-700 transition hover:rotate-90 duration-300"><Settings size={20}/></button>
@@ -835,7 +894,7 @@ function App() {
       >
         <div 
             style={{ 
-                // IMPORTANTE: La transformación de pan/zoom SOLO se aplica si es móvil
+                // IMPORTANTE: La transformación de pan/zoom SOLO se aplica si es móvil (isMobile es true)
                 transform: isMobile ? `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})` : 'none',
                 transformOrigin: 'center center',
                 transition: isDragging ? 'none' : 'transform 0.1s ease-out'
