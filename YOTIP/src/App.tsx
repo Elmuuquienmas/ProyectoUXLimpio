@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { getUserData, saveUserData, signInWithEmail, signUpWithEmail, signOutUser, onAuthStateChanged, registerUsername, isUsernameAvailable } from "./firebaseUtils";
-import type { Task, ParcelaObject, UserData, Toast, ViewTransform, StoreItem, ToastType } from './types';
+import type { Task, ParcelaObject, ViewTransform, StoreItem, Toast } from './types';
 import {
   ShoppingCart,
   ListTodo,
@@ -32,6 +32,7 @@ import {
   Upload,
   Image as ImageIcon,
   Maximize2,
+  Loader2,
 } from "lucide-react";
 
 // --- IMÁGENES ---
@@ -56,8 +57,7 @@ function hexToRgb(hex: string): string {
   return `${r}, ${g}, ${b}`;
 }
 
-// --- NUEVO: FUNCIÓN DE COMPRESIÓN DE IMÁGENES ---
-// Esto evita que la pantalla se ponga blanca por falta de memoria
+// --- COMPRESIÓN (Sin cambios, funciona bien) ---
 const compressImage = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -69,8 +69,8 @@ const compressImage = (file: File): Promise<string> => {
       img.src = result;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800; // Reducimos a un ancho máximo de 800px
-        const MAX_HEIGHT = 800;
+        const MAX_WIDTH = 600; 
+        const MAX_HEIGHT = 600;
         let width = img.width;
         let height = img.height;
 
@@ -91,10 +91,8 @@ const compressImage = (file: File): Promise<string> => {
         const ctx = canvas.getContext('2d');
         if (!ctx) return reject(new Error('Cannot get canvas context'));
         ctx.drawImage(img, 0, 0, width, height);
-
-        // Convertimos a JPEG con calidad 0.7 (70%)
-        // Esto reduce una foto de 10MB a unos 100KB
-        resolve(canvas.toDataURL('image/jpeg', 0.7));
+        // Calidad 0.6 para base de datos ligera
+        resolve(canvas.toDataURL('image/jpeg', 0.6));
       };
       img.onerror = (error) => reject(error);
     };
@@ -108,7 +106,6 @@ const DEFAULT_TASKS: Task[] = [
   { id: 3, name: "Ejercicio 30 min", reward: 50, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
 ];
 
-// Utilidades de Touch
 const getDistance = (touches: any): number => {
   return Math.hypot(
     touches[0].clientX - touches[1].clientX,
@@ -136,6 +133,7 @@ function App() {
 
   const [coins, setCoins] = useState<number>(0);
   const [parcelaObjects, setParcelaObjects] = useState<ParcelaObject[]>([]);
+  const objectsRef = useRef<ParcelaObject[]>(parcelaObjects);
   const [tasks, setTasks] = useState<Task[]>([]);
 
   // UI States
@@ -146,14 +144,16 @@ function App() {
   const [isContactOpen, setIsContactOpen] = useState(false);
   const [isBannerExpanded, setIsBannerExpanded] = useState(false);
   const [isAddTaskModalOpen, setIsAddTaskModalOpen] = useState(false);
-  // Username flow
+  
   const [username, setUsername] = useState<string | null>(null);
   const [usernameModalOpen, setUsernameModalOpen] = useState(false);
   const [desiredUsername, setDesiredUsername] = useState("");
   const [usernameError, setUsernameError] = useState("");
   const [usernameChecking, setUsernameChecking] = useState(false);
 
-  // DETECCIÓN DE MÓVIL
+  // INDICADOR DE GUARDADO
+  const [isSaving, setIsSaving] = useState(false);
+
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   useEffect(() => {
@@ -168,17 +168,16 @@ function App() {
   const [lumberjackFrame, setLumberjackFrame] = useState(0);
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
 
-  // --- LÓGICA DE ARRASTRE ---
+  // Drag & Zoom
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [draggedObjectId, setDraggedObjectId] = useState<string | number | null>(null);
   const dragOffset = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const parcelaRef = useRef<HTMLDivElement | null>(null);
-
-  // --- LÓGICA PAN Y ZOOM (SOLO MÓVIL) ---
   const [viewTransform, setViewTransform] = useState<ViewTransform>({ x: -400, y: -200, scale: 1 });
   const containerRef = useRef<HTMLDivElement | null>(null);
   const lastTouchRef = useRef<{ distance: number | null; x: number; y: number }>({ distance: null, x: 0, y: 0 });
 
+  // INPUT REF
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [taskToCompleteId, setTaskToCompleteId] = useState<number | null>(null);
   const [isResetConfirming, setIsResetConfirming] = useState(false);
@@ -194,7 +193,10 @@ function App() {
   }, []);
 
   useEffect(() => {
-    // Suscribirse al estado de autenticación y usar el uid como currentUser
+    objectsRef.current = parcelaObjects;
+  }, [parcelaObjects]);
+
+  useEffect(() => {
     const unsub = onAuthStateChanged((user) => {
       if (user) {
         setCurrentUser(user.uid);
@@ -206,7 +208,19 @@ function App() {
     return () => unsub && unsub();
   }, []);
 
-  // Refs para debounce saves
+  // SMART SAVE
+  const smartSave = async (dataToSave: any) => {
+      if (!currentUser) return;
+      setIsSaving(true);
+      try {
+          await saveUserData(currentUser, dataToSave);
+      } catch (error) {
+          console.error("Error al guardar:", error);
+      } finally {
+          setTimeout(() => setIsSaving(false), 800);
+      }
+  };
+
   const objectsSaveRef = useRef<number | null>(null);
   const tasksSaveRef = useRef<number | null>(null);
 
@@ -214,300 +228,114 @@ function App() {
     let mounted = true;
     async function loadUserData() {
       if (!currentUser) { setIsDataLoaded(false); return; }
+      
       try {
         const data = await getUserData(currentUser);
         if (!mounted) return;
+
         if (data) {
+          let loadedObjects = Array.isArray(data.objects) ? data.objects : [];
+          if (loadedObjects.length === 0) {
+              const localBackup = localStorage.getItem(`${currentUser}_objects`);
+              if (localBackup) {
+                  try {
+                      const parsedBackup = JSON.parse(localBackup);
+                      if (Array.isArray(parsedBackup) && parsedBackup.length > 0) {
+                          loadedObjects = parsedBackup;
+                          smartSave({ objects: loadedObjects });
+                      }
+                  } catch(e) {}
+              }
+          }
+
           setCoins(typeof data.coins === 'number' ? data.coins : 0);
-          setParcelaObjects(Array.isArray(data.objects) ? data.objects : []);
-          const loadedTasks: Task[] = Array.isArray(data.tasks) ? (data.tasks as Task[]).map((t: Task) => ({ ...t, archived: t.archived || false })) : DEFAULT_TASKS;
-          setTasks(loadedTasks);
-          // registrar username si existe en el documento; si no, abrir modal para pedirlo
+          setParcelaObjects(loadedObjects);
+          objectsRef.current = loadedObjects; 
+          setTasks(Array.isArray(data.tasks) ? (data.tasks as Task[]).map((t: Task) => ({ ...t, archived: t.archived || false })) : DEFAULT_TASKS);
           setUsername(data.username || null);
+          
           if (!data.username) setUsernameModalOpen(true);
-          const activeTask = loadedTasks.find((t: Task) => t.inProgress && !t.archived);
-          if (activeTask) { setActiveTaskId(activeTask.id); setAnimationState('chopping'); }
-          else { setActiveTaskId(null); setAnimationState('idle'); }
           changeThemeColor(data.theme || 'indigo', false);
+          
         } else {
-          // Fallback to localStorage if no Firestore document exists
-          const savedCoins = localStorage.getItem(`${currentUser}_coins`);
-          setCoins(savedCoins ? parseInt(savedCoins) : 0);
+          const localCoins = parseInt(localStorage.getItem(`${currentUser}_coins`) || '0');
+          let localObjects: ParcelaObject[] = [];
+          try { localObjects = JSON.parse(localStorage.getItem(`${currentUser}_objects`) || '[]'); } catch(e) {}
+          let localTasks: Task[] = DEFAULT_TASKS;
+          try { 
+             const parsed = JSON.parse(localStorage.getItem(`${currentUser}_tasks`) || '[]');
+             if(Array.isArray(parsed) && parsed.length > 0) localTasks = parsed;
+          } catch(e) {}
+          const localTheme = localStorage.getItem(`${currentUser}_theme`) || 'indigo';
 
-          const savedObjs = localStorage.getItem(`${currentUser}_objects`);
-          try {
-            const parsed = JSON.parse(savedObjs || '[]');
-            setParcelaObjects(Array.isArray(parsed) ? parsed : []);
-          } catch (e) { setParcelaObjects([]); }
-
-          const savedTasks = localStorage.getItem(`${currentUser}_tasks`);
-          let loadedTasks: Task[] = [];
-          try {
-            const parsedTasks = JSON.parse(savedTasks || '[]') as Task[];
-            loadedTasks = parsedTasks || [];
-            loadedTasks = loadedTasks.map((t: Task) => ({ ...t, archived: t.archived || false }));
-            setTasks(loadedTasks);
-          } catch (e) {
-            loadedTasks = DEFAULT_TASKS;
-            setTasks(loadedTasks);
-          }
-
-          const activeTask = loadedTasks.find((t: Task) => t.inProgress && !t.archived);
-          if (activeTask) {
-            setActiveTaskId(activeTask.id);
-            setAnimationState("chopping");
-          } else {
-            setActiveTaskId(null);
-            setAnimationState("idle");
-          }
-
-          const savedTheme = localStorage.getItem(`${currentUser}_theme`);
-          changeThemeColor(savedTheme || "indigo", false);
-          // write initial doc to Firestore so future loads come from there
-          await saveUserData(currentUser, { coins: coins, objects: parcelaObjects, tasks: loadedTasks, theme: savedTheme || 'indigo' });
-          // Si es la primera vez y no hay documento, pedimos username
+          setCoins(localCoins);
+          setParcelaObjects(localObjects);
+          objectsRef.current = localObjects;
+          setTasks(localTasks);
           setUsername(null);
           setUsernameModalOpen(true);
+          changeThemeColor(localTheme, false);
+
+          await smartSave({ 
+             coins: localCoins, 
+             objects: localObjects, 
+             tasks: localTasks, 
+             theme: localTheme 
+          });
         }
+        
         setIsDataLoaded(true);
+
       } catch (err) {
-        console.error('Error loading user data from Firestore:', err);
-        // fallback to localStorage behavior
-        const savedCoins = localStorage.getItem(`${currentUser}_coins`);
-        setCoins(savedCoins ? parseInt(savedCoins) : 0);
-        try { setParcelaObjects(JSON.parse(localStorage.getItem(`${currentUser}_objects`) || '[]')); } catch (e) { setParcelaObjects([]); }
-        try { setTasks(JSON.parse(localStorage.getItem(`${currentUser}_tasks`) || '[]')); } catch (e) { setTasks(DEFAULT_TASKS); }
-        const savedTheme = localStorage.getItem(`${currentUser}_theme`);
-        changeThemeColor(savedTheme || "indigo", false);
-        setIsDataLoaded(true);
+        console.error('Error cargando:', err);
+        setIsDataLoaded(true); 
       }
     }
+
     loadUserData();
     return () => { mounted = false; };
   }, [currentUser]);
 
-  // --- GUARDADO: localStorage + Firestore (con debounce para arrays) ---
   useEffect(() => {
     if (currentUser && isDataLoaded) {
-      try { localStorage.setItem(`${currentUser}_coins`, coins.toString()); } catch (e) { console.error("Error saving coins", e); }
-      try { saveUserData(currentUser, { coins }); } catch (e) { console.error('Error saving coins to Firestore', e); }
+      localStorage.setItem(`${currentUser}_coins`, coins.toString());
+      smartSave({ coins });
     }
   }, [coins, currentUser, isDataLoaded]);
 
   useEffect(() => {
-    if (currentUser && isDataLoaded) {
-      try { localStorage.setItem(`${currentUser}_objects`, JSON.stringify(parcelaObjects)); } catch (e) { console.error("Error saving objects", e); }
+    if (currentUser && isDataLoaded && !isDragging) {
+      localStorage.setItem(`${currentUser}_objects`, JSON.stringify(parcelaObjects));
       if (objectsSaveRef.current) window.clearTimeout(objectsSaveRef.current);
       objectsSaveRef.current = window.setTimeout(() => {
-        try { saveUserData(currentUser, { objects: parcelaObjects }); } catch (e) { console.error('Error saving objects to Firestore', e); }
-      }, 800);
+        smartSave({ objects: parcelaObjects });
+      }, 1000);
     }
-  }, [parcelaObjects, currentUser, isDataLoaded]);
+  }, [parcelaObjects, currentUser, isDataLoaded, isDragging]);
 
   useEffect(() => {
     if (currentUser && isDataLoaded) {
-      try { localStorage.setItem(`${currentUser}_tasks`, JSON.stringify(tasks)); } catch (e) { console.error("Error saving tasks (Storage Full?)", e); showToast("¡Almacenamiento lleno! Borra tareas antiguas.", "error"); }
+      localStorage.setItem(`${currentUser}_tasks`, JSON.stringify(tasks));
       if (tasksSaveRef.current) window.clearTimeout(tasksSaveRef.current);
       tasksSaveRef.current = window.setTimeout(() => {
-        try { saveUserData(currentUser, { tasks }); } catch (e) { console.error('Error saving tasks to Firestore', e); }
-      }, 900);
+        smartSave({ tasks });
+      }, 1000);
     }
-  }, [tasks, currentUser, isDataLoaded, showToast]);
-
-  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setAuthLoading(true);
-    try {
-      await signInWithEmail(email.trim(), password);
-      setEmail(""); setPassword("");
-      setSignupPrompt(false);
-      setLoginErrorMessage("");
-      showToast('Sesión iniciada', 'success');
-    } catch (err: any) {
-      console.error('Firebase signIn error:', err);
-      const code = err?.code || '';
-      const message = err?.message || String(err);
-      console.warn('Firebase auth error code:', code, 'message:', message);
-      if (code === 'auth/user-not-found') {
-        setSignupPromptMessage('No se encontró una cuenta para este correo. ¿Deseas crearla?');
-        setSignupPrompt(true);
-        setLoginErrorMessage('Cuenta no encontrada para este correo. Puedes crear una cuenta.');
-        showToast('Cuenta no encontrada. Puedes crear una.', 'error');
-      } else if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
-        setSignupPrompt(false);
-        setLoginErrorMessage('Contraseña incorrecta o credenciales inválidas. Revisa tu correo y contraseña.');
-        showToast('Contraseña incorrecta o credenciales inválidas.', 'error');
-        console.error('Detalle de credenciales inválidas:', {
-          code,
-          message,
-          customData: err?.customData || null,
-          serverResponse: err?.serverResponse || null,
-          stack: err?.stack || null,
-        });
-      } else {
-        setSignupPrompt(false);
-        const userMessage = `Error al iniciar sesión. (${code || 'unknown'})`;
-        setLoginErrorMessage(userMessage);
-        setSignupPromptMessage(`Error [${code}]: ${message}`);
-        showToast(`Error: ${message}`, 'error');
-        console.error('Unhandled Firebase auth error details:', err);
-      }
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleSignup = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!email.trim() || !password) return showToast('Introduce correo y contraseña', 'error');
-    if (password.length < 6) return showToast('La contraseña debe tener al menos 6 caracteres.', 'error');
-    setAuthLoading(true);
-    try {
-      await signUpWithEmail(email.trim(), password);
-      setEmail(""); setPassword("");
-      setSignupPrompt(false);
-      showToast('Cuenta creada', 'success');
-    } catch (err: any) {
-      console.error(err);
-      const code = err?.code || '';
-      const message = err?.message || String(err);
-      setSignupPromptMessage(`Error [${code}]: ${message}`);
-      showToast(message, 'error');
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const createAccount = async () => {
-    if (!email.trim() || !password) return showToast('Introduce correo y contraseña', 'error');
-    if (password.length < 6) return showToast('La contraseña debe tener al menos 6 caracteres.', 'error');
-    setAuthLoading(true);
-    try {
-      await signUpWithEmail(email.trim(), password);
-      setSignupPrompt(false);
-      setEmail(""); setPassword("");
-      showToast('Cuenta creada y sesión iniciada', 'success');
-    } catch (err: any) {
-      console.error(err);
-      showToast(err?.message || 'Error creando cuenta', 'error');
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleLogout = async () => {
-    if (!confirm("¿Cerrar sesión?")) return;
-    try {
-      await signOutUser();
-    } catch (err) { console.error('Error signing out', err); }
-    setIsDataLoaded(false);
-    setCurrentUser(null);
-    setEmail(""); setPassword("");
-    setCoins(0);
-    setParcelaObjects([]);
-    setTasks([]);
-    setActiveTaskId(null);
-    setAnimationState("idle");
-    changeThemeColor("indigo", false);
-  };
-
-  const normalizeUsername = (s: string) => s.trim().toLowerCase();
-
-  const handleUsernameSubmit = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!currentUser) return setUsernameError('No hay usuario autenticado.');
-    const val = normalizeUsername(desiredUsername);
-    if (!/^[a-z0-9_]{3,20}$/.test(val)) return setUsernameError('3-20 caracteres: letras, números o _');
-    setUsernameError("");
-    setUsernameChecking(true);
-    try {
-      await registerUsername(val, currentUser);
-      setUsername(val);
-      setUsernameModalOpen(false);
-      showToast('Nombre de usuario registrado', 'success');
-    } catch (err: any) {
-      const msg = err?.message || String(err);
-      if (msg === 'username-taken') setUsernameError('Ese nombre ya está en uso. Prueba otro.');
-      else if (msg === 'user-already-has-username') {
-        const data = await getUserData(currentUser);
-        setUsername(data?.username || null);
-        setUsernameModalOpen(false);
-      } else {
-        setUsernameError('Error al registrar nombre. Intenta de nuevo.');
-        console.error('registerUsername error:', err);
-      }
-    } finally {
-      setUsernameChecking(false);
-    }
-  };
-
-  const checkUsernameAvailability = async (value: string) => {
-    const v = normalizeUsername(value);
-    if (!/^[a-z0-9_]{3,20}$/.test(v)) { setUsernameError('3-20 caracteres: letras, números o _'); return; }
-    setUsernameError('');
-    try {
-      const ok = await isUsernameAvailable(v);
-      if (!ok) setUsernameError('Ese nombre ya está en uso.');
-      else setUsernameError('');
-    } catch (err) {
-      console.error('isUsernameAvailable error', err);
-    }
-  };
+  }, [tasks, currentUser, isDataLoaded]);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      const now = new Date();
-      setTasks(currentTasks => {
-        let penaltyOccurred = false;
-        let penaltyAmount = 0;
-        const remainingTasks = currentTasks.filter(t => {
-          if (t.completed || !t.deadline || t.archived) return true;
-          const isExpired = new Date(t.deadline) < now;
-          if (isExpired) {
-            if (t.inProgress) {
-              penaltyOccurred = true;
-              penaltyAmount += t.reward;
-              if (t.id === activeTaskId) setActiveTaskId(null);
-            }
-            return false;
-          }
-          return true;
-        });
-        if (penaltyOccurred && penaltyAmount > 0) {
-          setTimeout(() => {
-            setCoins(c => Math.max(0, c - penaltyAmount));
-            showToast(`¡Tarea vencida! -${penaltyAmount} monedas`, "error");
-          }, 0);
-        }
-        return remainingTasks;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [activeTaskId, showToast]);
+    const activeTask = tasks.find(t => t.inProgress && !t.archived);
+    if (activeTask) { setActiveTaskId(activeTask.id); setAnimationState('chopping'); }
+    else { setActiveTaskId(null); setAnimationState('idle'); }
+  }, [tasks]);
 
   useEffect(() => {
-    let interval: number | undefined;
-    if (animationState === "chopping") interval = window.setInterval(() => setLumberjackFrame(p => (p + 1) % 2), 300) as unknown as number;
-    else if (animationState === "sitting") interval = window.setInterval(() => setLumberjackFrame(p => (p + 1) % 2), 500) as unknown as number;
-    else setLumberjackFrame(0);
-    return () => { if (interval !== undefined) window.clearInterval(interval); };
+      let interval: number | undefined;
+      if (animationState === "chopping") interval = window.setInterval(() => setLumberjackFrame(p => (p + 1) % 2), 300) as unknown as number;
+      else if (animationState === "sitting") interval = window.setInterval(() => setLumberjackFrame(p => (p + 1) % 2), 500) as unknown as number;
+      else setLumberjackFrame(0);
+      return () => { if (interval !== undefined) window.clearInterval(interval); };
   }, [animationState]);
-
-  useEffect(() => {
-    const working = tasks.some(t => t.inProgress && !t.archived);
-    if (!activeTaskId && !working && animationState === "chopping") {
-      setIsAnimating(true); setAnimationState("sitting");
-      setTimeout(() => { setAnimationState("idle"); setIsAnimating(false); }, 2000);
-    } else if (working && animationState !== "chopping") {
-      setAnimationState("chopping");
-    }
-  }, [activeTaskId, tasks, animationState]);
-
-  useEffect(() => {
-    return () => {
-      if (resetTimeoutRef.current) clearTimeout(resetTimeoutRef.current);
-    };
-  }, []);
 
   const closeAllMenus = () => { setConfigDropdownOpen(false); setTycoonPanelOpen(false); setIsContactOpen(false); setIsBannerExpanded(false); };
   const toggleStoreDrawer = () => { closeAllMenus(); setStoreDrawerOpen(!storeDrawerOpen); };
@@ -515,56 +343,171 @@ function App() {
   const toggleConfig = () => { closeAllMenus(); setStoreDrawerOpen(false); setActivitiesDrawerOpen(false); setConfigDropdownOpen(!configDropdownOpen); };
   const toggleTycoonPanel = () => { closeAllMenus(); setStoreDrawerOpen(false); setActivitiesDrawerOpen(false); setTycoonPanelOpen(!tycoonPanelOpen); };
 
-  const handleAddTask = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const target = e.currentTarget as HTMLFormElement & { taskName: HTMLInputElement; taskReward: HTMLInputElement; taskDeadline: HTMLInputElement };
-    const name = target.taskName.value.trim();
-    const reward = parseInt(target.taskReward.value);
-    const deadline = target.taskDeadline.value;
-    if (!name || isNaN(reward) || reward <= 0) return showToast("Datos inválidos", "error");
-    setTasks(prev => [...prev, { id: Date.now(), name, reward, completed: false, inProgress: false, deadline: deadline || null, proofImage: null, archived: false }]);
-    setIsAddTaskModalOpen(false);
-    showToast("Tarea guardada", "info");
+    setAuthLoading(true);
+    try {
+      await signInWithEmail(email.trim(), password);
+      setEmail(""); setPassword("");
+      showToast('Sesión iniciada', 'success');
+    } catch (err: any) {
+       setLoginErrorMessage("Error al iniciar sesión");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignup = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    try {
+      await signUpWithEmail(email.trim(), password);
+      setEmail(""); setPassword("");
+      showToast('Cuenta creada', 'success');
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const createAccount = async () => {
+    setAuthLoading(true);
+    try {
+      await signUpWithEmail(email.trim(), password);
+      setSignupPrompt(false);
+      setEmail(""); setPassword("");
+      showToast('Cuenta creada', 'success');
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (!confirm("¿Cerrar sesión?")) return;
+    await signOutUser();
+    setIsDataLoaded(false);
+    setCurrentUser(null);
+    setParcelaObjects([]);
+    setTasks([]);
+  };
+
+  const handleUsernameSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!currentUser) return;
+    const val = desiredUsername.trim().toLowerCase();
+    setUsernameChecking(true);
+    try {
+      await registerUsername(val, currentUser);
+      setUsername(val);
+      setUsernameModalOpen(false);
+      showToast('Nombre guardado', 'success');
+    } catch (err: any) {
+      setUsernameError('Error al guardar o nombre en uso');
+    } finally {
+      setUsernameChecking(false);
+    }
+  };
+
+  const handleBuyItem = (item: StoreItem) => {
+    if (isAnimating) return;
+    if (coins >= item.cost) {
+      const newCoins = coins - item.cost;
+      const newObj: ParcelaObject = { 
+          id: Date.now() + Math.random(), 
+          name: item.name, 
+          objectId: item.objectId || '', 
+          lucideIcon: item.lucideIcon, 
+          cost: item.cost, 
+          position: { top: 50, left: 50 } 
+      };
+
+      setCoins(newCoins);
+      const newObjects = [...parcelaObjects, newObj];
+      setParcelaObjects(newObjects);
+      objectsRef.current = newObjects;
+
+      localStorage.setItem(`${currentUser}_objects`, JSON.stringify(newObjects));
+      localStorage.setItem(`${currentUser}_coins`, newCoins.toString());
+      smartSave({ coins: newCoins, objects: newObjects });
+
+      showToast("Comprado", "success");
+    } else showToast("Faltan monedas", "error");
+  };
+
+  const removeParcelaObject = (id: string | number) => {
+    const newObjects = parcelaObjects.filter(o => o.id !== id);
+    setParcelaObjects(newObjects);
+    objectsRef.current = newObjects;
+    localStorage.setItem(`${currentUser}_objects`, JSON.stringify(newObjects));
+    smartSave({ objects: newObjects });
+  };
+
+  const handleAddTask = (e: React.FormEvent<HTMLFormElement>) => {
+      e.preventDefault();
+      const target = e.currentTarget as any;
+      const name = target.taskName.value;
+      const reward = parseInt(target.taskReward.value);
+      const deadline = target.taskDeadline.value;
+      
+      const newTasks = [...tasks, { id: Date.now(), name, reward, completed: false, inProgress: false, deadline: deadline || null, proofImage: null, archived: false }];
+      setTasks(newTasks);
+      setIsAddTaskModalOpen(false);
+      smartSave({ tasks: newTasks });
   };
 
   const handleStartTask = (id: number) => {
-    if (isAnimating) return;
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, inProgress: true } : { ...t, inProgress: false }));
-    setActiveTaskId(id); setAnimationState("chopping");
+      const newTasks = tasks.map(t => t.id === id ? { ...t, inProgress: true } : { ...t, inProgress: false });
+      setTasks(newTasks);
+      smartSave({ tasks: newTasks });
   };
 
+  // --- SOLUCIÓN DEL BOTÓN HECHO ---
   const triggerFileUpload = (taskId: number) => {
-    if (isAnimating) return;
-    setTaskToCompleteId(taskId);
-    if (fileInputRef.current) fileInputRef.current.click();
+      console.log("Triggering upload for task:", taskId);
+      
+      // Eliminamos el bloqueo de animación para asegurar que abra
+      setTaskToCompleteId(taskId);
+      
+      // Verificación robusta del input
+      if (fileInputRef.current) {
+          // Limpiamos el valor para permitir re-seleccionar el mismo archivo
+          fileInputRef.current.value = '';
+          fileInputRef.current.click();
+      } else {
+          console.error("Input ref not found!");
+          showToast("Error interno: Input no encontrado", "error");
+      }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files ? e.target.files[0] : null;
-    if (!file || !taskToCompleteId) return;
-    try {
-      setIsAnimating(true);
-      // USAMOS LA NUEVA FUNCIÓN DE COMPRESIÓN AQUÍ
-      const base64Image = await compressImage(file);
+      const file = e.target.files ? e.target.files[0] : null;
+      if (!file || !taskToCompleteId) return;
+      
+      try {
+          setIsAnimating(true);
+          const base64 = await compressImage(file);
+          
+          const task = tasks.find(t => t.id === taskToCompleteId);
+          const reward = task ? task.reward : 0;
+          
+          const newTasks = tasks.map(t => t.id === taskToCompleteId ? { ...t, completed: true, inProgress: false, proofImage: base64 } : t);
+          setTasks(newTasks);
+          
+          const newCoins = coins + reward;
+          setCoins(newCoins);
 
-      const task = tasks.find(t => t.id === taskToCompleteId);
-      const reward = task ? task.reward : 0;
-
-      setTasks(prev => prev.map(t => t.id === taskToCompleteId ? { ...t, completed: true, inProgress: false, proofImage: base64Image } : t));
-      setCoins(c => c + reward);
-
-      setActiveTaskId(null);
-      showToast(`¡+${reward} monedas! Foto guardada.`, "success");
-
-      setTimeout(() => setIsAnimating(false), 500);
-    } catch (error) {
-      console.error(error);
-      showToast("Error: La imagen es muy pesada o inválida.", "error");
-      setIsAnimating(false);
-    } finally {
+          smartSave({ tasks: newTasks, coins: newCoins });
+          
+          showToast(`¡+${reward} monedas!`, 'success');
+          setIsAnimating(false);
+      } catch (e) {
+          setIsAnimating(false);
+          showToast("Error procesando imagen", 'error');
+      }
       setTaskToCompleteId(null);
-      e.target.value = "";
-    }
   };
 
   const handleDeleteAllTasks = () => {
@@ -573,44 +516,16 @@ function App() {
       setActiveTaskId(null);
       setAnimationState("idle");
       setIsResetConfirming(false);
-      showToast("Lista limpiada. Datos guardados en historial.", "info");
-      if (resetTimeoutRef.current) clearTimeout(resetTimeoutRef.current);
     } else {
       setIsResetConfirming(true);
-      showToast("Click de nuevo para archivar todo.", "warning");
-      resetTimeoutRef.current = setTimeout(() => {
-        setIsResetConfirming(false);
-      }, 3000);
+      resetTimeoutRef.current = setTimeout(() => setIsResetConfirming(false), 3000);
     }
   };
 
-  const handleBuyItem = (item: StoreItem) => {
-    if (isAnimating) return;
-    if (coins >= item.cost) {
-      setCoins(c => c - item.cost);
-      setParcelaObjects(prev => [...prev, { id: Date.now() + Math.random(), name: item.name, objectId: item.objectId || '', lucideIcon: item.lucideIcon, cost: item.cost, position: { top: 50, left: 50 } }]);
-      showToast("Comprado", "success");
-    } else showToast("Faltan monedas", "error");
-  };
-
-  const removeParcelaObject = (id: string | number) => {
-    setParcelaObjects(prev => prev.filter(o => o.id !== id));
-    showToast("Eliminado", "info");
-  };
-
-  // --- ARRASTRE OBJETOS ---
   const handleDragStart = (e: React.MouseEvent | React.TouchEvent, id: string | number, pos: { top: number; left: number }) => {
-    // @ts-ignore - unify touch/mouse handling checks
     if (e.type === 'touchstart' && (e as React.TouchEvent).touches && (e as React.TouchEvent).touches.length > 1) return;
-    // stopPropagation exists on both event types via React synthetic events
     (e as React.UIEvent).stopPropagation();
-
-    // Mouse-specific checks
-    if ((e as React.MouseEvent).button !== undefined) {
-      if ((e as React.MouseEvent).button !== 0) return;
-      (e as React.MouseEvent).preventDefault();
-    }
-
+    if ((e as React.MouseEvent).button !== undefined && (e as React.MouseEvent).button !== 0) return;
     if (isAnimating) return;
 
     const clientX = (e as any).type && (e as any).type.includes('touch') ? (e as any).touches[0].clientX : (e as any).clientX;
@@ -631,19 +546,24 @@ function App() {
   const handleDrag = useCallback((e: MouseEvent | TouchEvent) => {
     if (!isDragging || !draggedObjectId || !parcelaRef.current) return;
     e.preventDefault();
-
     const clientX = (e as TouchEvent).type && (e as TouchEvent).type.includes('touch') ? (e as TouchEvent).touches[0].clientX : (e as MouseEvent).clientX;
     const clientY = (e as TouchEvent).type && (e as TouchEvent).type.includes('touch') ? (e as TouchEvent).touches[0].clientY : (e as MouseEvent).clientY;
-
     const rect = parcelaRef.current.getBoundingClientRect();
-
     let left = Math.max(0, Math.min(100, ((clientX - rect.left - dragOffset.current.x) / rect.width) * 100));
     let top = Math.max(0, Math.min(100, ((clientY - rect.top - dragOffset.current.y) / rect.height) * 100));
-
     setParcelaObjects(prev => prev.map(o => o.id === draggedObjectId ? { ...o, position: { top, left } } : o));
   }, [isDragging, draggedObjectId]);
 
-  const handleDragEnd = () => { setIsDragging(false); setDraggedObjectId(null); };
+  const handleDragEnd = async () => {
+    setIsDragging(false);
+    setDraggedObjectId(null);
+
+    if (currentUser && objectsRef.current.length > 0) {
+      const currentObjs = objectsRef.current;
+      localStorage.setItem(`${currentUser}_objects`, JSON.stringify(currentObjs));
+      smartSave({ objects: currentObjs });
+    }
+  };
 
   useEffect(() => {
     if (isDragging) {
@@ -651,8 +571,7 @@ function App() {
       window.addEventListener('mouseup', handleDragEnd);
       window.addEventListener('touchmove', handleDrag, { passive: false });
       window.addEventListener('touchend', handleDragEnd);
-    }
-    else {
+    } else {
       window.removeEventListener('mousemove', handleDrag);
       window.removeEventListener('mouseup', handleDragEnd);
       window.removeEventListener('touchmove', handleDrag);
@@ -666,14 +585,10 @@ function App() {
     };
   }, [isDragging, handleDrag]);
 
-  // --- ZOOM Y PAN DEL MAPA (SOLO SI ES MÓVIL) ---
   const handleContainerTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (!isMobile || isAnyMenuOpen) return;
-
     if (e.touches.length === 2) {
-      const dist = getDistance(e.touches);
-      const mid = getMidpoint(e.touches);
-      lastTouchRef.current = { distance: dist, x: mid.x, y: mid.y };
+      lastTouchRef.current = { distance: getDistance(e.touches), x: getMidpoint(e.touches).x, y: getMidpoint(e.touches).y };
     } else if (e.touches.length === 1 && !isDragging) {
       lastTouchRef.current = { distance: null, x: e.touches[0].clientX, y: e.touches[0].clientY };
     }
@@ -681,35 +596,20 @@ function App() {
 
   const handleContainerTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
     if (!isMobile || isDragging || isAnyMenuOpen) return;
-
     if (e.touches.length === 2) {
       e.preventDefault();
       const dist = getDistance(e.touches);
       const mid = getMidpoint(e.touches);
-
       const scaleFactor = dist / (lastTouchRef.current.distance || dist);
       const newScale = Math.min(Math.max(0.5, viewTransform.scale * scaleFactor), 4);
-
       const dx = mid.x - lastTouchRef.current.x;
       const dy = mid.y - lastTouchRef.current.y;
-
-      setViewTransform(prev => ({
-        scale: newScale,
-        x: prev.x + dx,
-        y: prev.y + dy
-      }));
-
+      setViewTransform(prev => ({ scale: newScale, x: prev.x + dx, y: prev.y + dy }));
       lastTouchRef.current = { distance: dist, x: mid.x, y: mid.y };
     } else if (e.touches.length === 1) {
       const dx = e.touches[0].clientX - lastTouchRef.current.x;
       const dy = e.touches[0].clientY - lastTouchRef.current.y;
-
-      setViewTransform(prev => ({
-        ...prev,
-        x: prev.x + dx,
-        y: prev.y + dy
-      }));
-
+      setViewTransform(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
       lastTouchRef.current = { ...lastTouchRef.current, x: e.touches[0].clientX, y: e.touches[0].clientY };
     }
   };
@@ -727,19 +627,14 @@ function App() {
       try { const rgb = hexToRgb(color); b = `rgba(${rgb}, 0.4)`; } catch (e) { b = "#e0e7ff"; }
     } else {
       const key = color as keyof typeof colors;
-      if (colors[key]) {
-        p = colors[key].primary; b = colors[key].bg;
-      } else {
-        p = '#4f46e5'; b = '#a5b4fc';
-      }
+      if (colors[key]) { p = colors[key].primary; b = colors[key].bg; } 
+      else { p = '#4f46e5'; b = '#a5b4fc'; }
     }
-
     document.documentElement.style.setProperty("--theme-color-primary", p);
     document.documentElement.style.setProperty("--theme-color-bg", b);
     document.documentElement.style.setProperty("--theme-rgb", hexToRgb(p));
-
     if (save && currentUser) {
-      try { saveUserData(currentUser, { theme: color }); } catch (e) { console.error('Error saving theme to Firestore', e); }
+      smartSave({ theme: color });
     }
     if (!color.startsWith("#")) setConfigDropdownOpen(false);
   };
@@ -766,12 +661,10 @@ function App() {
     const completed = tasks.filter((t: Task) => t.completed).length;
     const inProgress = tasks.filter((t: Task) => t.inProgress).length;
     const pending = total - completed - inProgress;
-
     const r = 16; const c = 2 * Math.PI * r;
     const p1 = (completed / total) * c;
     const p2 = (inProgress / total) * c;
     const p3 = (pending / total) * c;
-
     return (
       <div className="flex items-center gap-6">
         <div className="relative w-32 h-32">
@@ -817,14 +710,12 @@ function App() {
             <button type="button" onClick={() => setIsSignup(false)} className={`px-4 py-2 rounded-xl font-bold ${!isSignup ? 'bg-white text-indigo-700' : 'bg-white/30 text-white'}`}>Iniciar sesión</button>
             <button type="button" onClick={() => setIsSignup(true)} className={`px-4 py-2 rounded-xl font-bold ${isSignup ? 'bg-white text-indigo-700' : 'bg-white/30 text-white'}`}>Crear cuenta</button>
           </div>
-
           {loginErrorMessage && (
             <div role="alert" aria-live="assertive" className="mb-3 flex items-start gap-3 bg-white/30 border border-red-400 text-red-800 px-3 py-2 rounded-lg">
               <AlertTriangle className="text-red-700 mt-0.5" />
               <div className="text-sm font-bold">{loginErrorMessage}</div>
             </div>
           )}
-
           <form onSubmit={isSignup ? handleSignup : handleLogin} className="space-y-4">
             <label className="text-xs text-indigo-100 font-medium text-left block">Correo electrónico</label>
             <input autoFocus type="email" placeholder="tu@correo.com" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-white/90 border-0 text-gray-800 font-medium placeholder-gray-400 focus:ring-4 focus:ring-indigo-400/50 transition outline-none shadow-inner" />
@@ -833,14 +724,12 @@ function App() {
             {password && password.length > 0 && password.length < 6 && (
               <p className="text-xs text-red-300 text-left">La contraseña debe tener al menos 6 caracteres.</p>
             )}
-
             <div className="flex gap-2">
               <button type="submit" disabled={authLoading || !email.trim() || !password} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg transition">
                 {authLoading ? (isSignup ? 'Creando...' : 'Ingresando...') : (isSignup ? 'Crear cuenta' : 'Entrar')}
               </button>
               <button type="button" onClick={() => { setIsSignup(s => !s); setLoginErrorMessage(''); }} className="flex-1 py-3 bg-white/60 text-indigo-700 font-bold rounded-xl border border-white/40">{isSignup ? 'Ya tengo cuenta' : 'Crear cuenta'}</button>
             </div>
-
             {signupPrompt && (
               <div className="mt-3 text-sm text-center">
                 <p className="text-red-600 mb-2">{signupPromptMessage}</p>
@@ -851,7 +740,6 @@ function App() {
               </div>
             )}
           </form>
-          <p className="text-xs text-indigo-100 mt-4">También puedes crear una cuenta nueva con tu correo.</p>
         </div>
       </div>
     );
@@ -870,11 +758,23 @@ function App() {
         .color-input-fix { position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; padding: 0; margin: 0; cursor: pointer; border: none; }
         .parcela-object { position: absolute; transform: translate(-50%, -50%); cursor: grab; user-select: none; transition: transform 0.1s; }
         .parcela-object:active { cursor: grabbing; transform: translate(-50%, -50%) scale(0.95); }
-        .house-size { width: 16rem; height: 16rem; }
-        .standard-size { width: 6rem; height: 6rem; }
       `}</style>
 
-      <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" style={{ display: 'none' }} />
+      {/* --- INPUT MOVIDO AL TOP, Y VISIBLE PARA DEBUGGING (Hidden via class, not display:none) --- */}
+      <input 
+        type="file" 
+        ref={fileInputRef} 
+        onChange={handleFileChange} 
+        accept="image/png, image/jpeg, image/webp" 
+        className="hidden" 
+      />
+
+      {isSaving && (
+        <div className="fixed top-4 right-4 z-[100] bg-black/80 backdrop-blur-md text-white px-4 py-2 rounded-full shadow-2xl border border-white/20 flex items-center gap-3 animate-pulse">
+            <Loader2 className="animate-spin text-indigo-400" size={18}/>
+            <span className="text-xs font-bold tracking-wider uppercase">Guardando...</span>
+        </div>
+      )}
 
       <div className="hidden" style={{ display: 'none' }}>
         <img src={images.lumberjack.idle} alt="preload" />
@@ -898,6 +798,7 @@ function App() {
         </div>
       )}
 
+      {/* MODALS */}
       {isAddTaskModalOpen && (
         <div className="fixed inset-0 bg-black/20 backdrop-blur-md z-[60] flex items-center justify-center p-4">
           <div className="w-full max-w-md liquid-glass p-8 pop-in shadow-2xl border border-white/60">
@@ -918,9 +819,6 @@ function App() {
             <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4"><Mail size={32} className="text-indigo-600" /></div>
             <h3 className="text-2xl font-black text-gray-800 mb-1">Equipo 6 YOTIP</h3>
             <p className="text-sm text-gray-500 font-medium mb-6">Soporte y Desarrollo</p>
-            <div className="bg-white/50 p-4 rounded-xl border border-white/50 mb-6">
-              <p className="text-indigo-600 font-bold flex items-center justify-center gap-2 text-sm"><MessageCircle size={16} /> soporte@yotip.com</p>
-            </div>
             <button onClick={() => setIsContactOpen(false)} className="w-full py-3 bg-gray-800 text-white font-bold rounded-xl hover:bg-gray-900 transition">Cerrar</button>
           </div>
         </div>
@@ -930,14 +828,12 @@ function App() {
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
           <div className="w-full max-w-md liquid-glass p-6 pop-in shadow-2xl border border-white/60" onClick={e => e.stopPropagation()}>
             <h3 className="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2"><User className="text-indigo-600" /> Elige un nombre de usuario</h3>
-            <p className="text-sm text-gray-600 mb-4">Tu nombre será público y único. Usa letras, números o guion bajo (3-20 caracteres).</p>
             <form onSubmit={handleUsernameSubmit} className="space-y-4">
               <div>
-                <input autoFocus value={desiredUsername} onChange={(e) => setDesiredUsername(e.target.value)} onBlur={(e) => checkUsernameAvailability(e.target.value)} placeholder="usuario_ejemplo" className="w-full px-4 py-3 rounded-xl bg-white/60 border border-white/50 focus:outline-none" />
+                <input autoFocus value={desiredUsername} onChange={(e) => setDesiredUsername(e.target.value)} placeholder="usuario_ejemplo" className="w-full px-4 py-3 rounded-xl bg-white/60 border border-white/50 focus:outline-none" />
                 {usernameError && <p className="text-xs text-red-500 mt-2">{usernameError}</p>}
               </div>
               <div className="flex justify-end gap-3 pt-2">
-                <button type="button" onClick={() => { setUsernameModalOpen(false); setDesiredUsername(''); setUsernameError(''); }} className="px-4 py-2 bg-gray-200 rounded-xl">Cancelar</button>
                 <button type="submit" disabled={usernameChecking} className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold">{usernameChecking ? 'Guardando...' : 'Guardar nombre'}</button>
               </div>
             </form>
@@ -945,6 +841,7 @@ function App() {
         </div>
       )}
 
+      {/* DRAWERS & MENUS */}
       <aside className={`fixed inset-y-0 left-0 w-80 liquid-glass z-[50] p-6 m-4 transition-transform duration-500 ${storeDrawerOpen ? "translate-x-0" : "-translate-x-[150%]"}`}>
         <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ShoppingCart className="text-indigo-600" /> Tienda</h3><button onClick={toggleStoreDrawer} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20} /></button></div>
         <div className="p-5 rounded-2xl bg-gradient-to-br from-yellow-100/80 to-orange-100/80 border border-white/50 mb-6 shadow-sm backdrop-blur-sm"><p className="text-xs font-bold text-yellow-800 uppercase tracking-wide mb-1">Tu Saldo</p><p className="text-4xl font-black text-yellow-600 flex items-center gap-1 tracking-tighter">{coins}<DollarSign size={28} /></p></div>
@@ -968,79 +865,52 @@ function App() {
                     <p className={`font-bold ${task.inProgress ? "text-white" : "text-gray-900"} ${task.completed && "line-through decoration-green-500/50"}`}>{task.name}</p>
                     <p className={`text-xs font-bold ${task.inProgress ? "text-blue-300" : "text-indigo-600"} flex items-center mt-1`}>+{task.reward} Monedas</p>
                     {task.deadline && !task.completed && (
-                      <div className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded-md bg-red-100/50 border border-red-200 text-[10px] font-bold text-red-600">
-                        Expira: {new Date(task.deadline).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </div>
+                      <div className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded-md bg-red-100/50 border border-red-200 text-[10px] font-bold text-red-600">Expira: {new Date(task.deadline).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                     )}
                   </div>
-
                   {task.completed && task.proofImage && (
                     <div className="relative group cursor-pointer shrink-0" onClick={() => setPreviewImageSrc(task.proofImage ?? null)}>
-                      <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-xl overflow-hidden border-4 border-green-200/50 shadow-sm transition-transform group-hover:scale-105">
-                        <img src={task.proofImage} alt="Proof" className="w-full h-full object-cover" />
-                      </div>
-                      <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl"><Maximize2 size={24} className="text-white drop-shadow-lg" /></div>
+                      <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-xl overflow-hidden border-4 border-green-200/50 shadow-sm transition-transform group-hover:scale-105"><img src={task.proofImage} alt="Proof" className="w-full h-full object-cover" /></div>
                     </div>
                   )}
                   {task.inProgress && !task.completed && <div className="animate-pulse bg-white/20 text-white p-1.5 rounded-lg shrink-0"><Zap size={14} /></div>}
                 </div>
               </div>
-
               <div className="flex gap-2 mt-2">
                 {!task.completed ? (
                   <>
                     <button onClick={() => handleStartTask(task.id)} disabled={task.inProgress || isAnimating} className={`flex-1 py-2 border text-xs font-bold rounded-lg transition disabled:opacity-50 ${task.inProgress ? "bg-gray-700 border-gray-600 text-gray-400 cursor-not-allowed" : "bg-white/60 border-white text-gray-700 hover:bg-blue-50 hover:text-blue-700"}`}>{task.inProgress ? "En curso..." : "Iniciar"}</button>
-                    <button onClick={() => triggerFileUpload(task.id)} disabled={!task.inProgress || isAnimating} className={`flex-1 py-2 text-xs font-bold rounded-lg shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2 ${task.inProgress ? "bg-white text-gray-900 hover:bg-gray-200" : "bg-gray-300 text-gray-500 cursor-not-allowed"}`}><Upload size={14} /> ¡Hecho!</button>
+                    {/* BOTÓN REPARADO */}
+                    <button onClick={() => triggerFileUpload(task.id)} disabled={!task.inProgress} className={`flex-1 py-2 text-xs font-bold rounded-lg shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2 ${task.inProgress ? "bg-white text-gray-900 hover:bg-gray-200" : "bg-gray-300 text-gray-500 cursor-not-allowed"}`}><Upload size={14} /> ¡Hecho!</button>
                   </>
-                ) : (
-                  <div className="w-full py-1.5 text-center text-xs font-bold text-green-700 bg-green-100/50 border border-green-200 rounded-lg">¡Completada!</div>
-                )}
+                ) : (<div className="w-full py-1.5 text-center text-xs font-bold text-green-700 bg-green-100/50 border border-green-200 rounded-lg">¡Completada!</div>)}
               </div>
             </div>
           ))}
         </div>
-
         <div className="mt-4 pt-4 border-t border-gray-200/30 shrink-0">
-          <button
-            onClick={handleDeleteAllTasks}
-            className={`w-full py-3 font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all duration-300 ${isResetConfirming
-                ? "bg-red-500 text-white hover:bg-red-600 animate-pulse"
-                : "bg-gray-200 text-gray-600 hover:bg-gray-300"
-              }`}
-          >
-            <Trash2 size={18} className={isResetConfirming ? "animate-bounce" : ""} />
-            {isResetConfirming ? "¿Seguro? Click para confirmar" : "Eliminar todas las tareas"}
+          <button onClick={handleDeleteAllTasks} className={`w-full py-3 font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all duration-300 ${isResetConfirming ? "bg-red-500 text-white hover:bg-red-600 animate-pulse" : "bg-gray-200 text-gray-600 hover:bg-gray-300"}`}>
+            <Trash2 size={18} className={isResetConfirming ? "animate-bounce" : ""} />{isResetConfirming ? "¿Seguro? Click para confirmar" : "Eliminar todas las tareas"}
           </button>
         </div>
       </aside>
 
-      <header
-        className={`fixed top-6 left-1/2 -translate-x-1/2 w-[95%] sm:w-[90%] max-w-5xl z-[50] pointer-events-auto transition-transform duration-300 ease-in-out ${isAnyMenuOpen ? '-translate-y-[150%]' : 'translate-y-0'}`}
-      >
+      <header className={`fixed top-6 left-1/2 -translate-x-1/2 w-[95%] sm:w-[90%] max-w-5xl z-[50] pointer-events-auto transition-transform duration-300 ease-in-out ${isAnyMenuOpen ? '-translate-y-[150%]' : 'translate-y-0'}`}>
         <div className="liquid-glass px-3 sm:px-6 py-3 flex justify-between items-center shadow-xl">
           <div className="flex items-center gap-2 sm:gap-4">
             <div className="bg-gradient-to-tr from-indigo-600 to-purple-500 text-white p-2 rounded-lg shadow-lg shadow-indigo-500/30"><BarChart4 size={20} /></div>
             <div><h1 className="hidden sm:block text-lg font-black text-gray-900 tracking-tight leading-none">YOTIP</h1><span className="text-[8px] font-bold text-indigo-500 uppercase tracking-widest hidden sm:block">Your Time Your Productivity</span></div>
-            {/* BOTÓN DE DATOS (SOLO ESCRITORIO) */}
             <button onClick={toggleTycoonPanel} className="hidden sm:block ml-2 text-xs font-bold text-gray-600 hover:text-indigo-700 bg-white/40 px-3 py-1.5 rounded-lg transition border border-white/50 hover:bg-white/80">Datos</button>
           </div>
-
           <nav className="flex items-center gap-1 sm:gap-3">
             <button onClick={toggleStoreDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-2 sm:px-3 py-2 rounded-xl hover:bg-white/50 transition"><ShoppingCart size={18} /> <span className="hidden sm:inline">Tienda</span></button>
             <button onClick={toggleActivitiesDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-2 sm:px-3 py-2 rounded-xl hover:bg-white/50 transition"><ListTodo size={18} /> <span className="hidden sm:inline">Tareas</span></button>
             <div className="h-6 w-[1px] bg-gray-400/30 mx-1 sm:mx-2"></div>
-
-            <div className="flex items-center justify-center gap-1 bg-yellow-100/50 border border-yellow-200/50 px-2 sm:px-3 py-1.5 rounded-xl backdrop-blur-sm min-w-[80px] whitespace-nowrap">
-              <span className="font-black text-yellow-700 text-sm">{coins}</span><DollarSign size={14} className="text-yellow-600" />
-            </div>
-
-            {/* BOTÓN DE DATOS (SOLO MÓVIL) */}
+            <div className="flex items-center justify-center gap-1 bg-yellow-100/50 border border-yellow-200/50 px-2 sm:px-3 py-1.5 rounded-xl backdrop-blur-sm min-w-[80px] whitespace-nowrap"><span className="font-black text-yellow-700 text-sm">{coins}</span><DollarSign size={14} className="text-yellow-600" /></div>
             <button onClick={toggleTycoonPanel} className="sm:hidden p-2 text-gray-500 hover:text-indigo-700 transition"><BarChart4 size={20} /></button>
-
             <button onClick={toggleConfig} className="p-2 text-gray-500 hover:text-indigo-700 transition hover:rotate-90 duration-300"><Settings size={20} /></button>
             <button onClick={handleLogout} className="p-2 text-red-400 hover:text-red-600 bg-red-50/50 rounded-lg transition"><LogOut size={18} /></button>
           </nav>
-
           {configDropdownOpen && (
             <div className="absolute top-full right-0 mt-4 w-64 liquid-glass p-5 shadow-2xl pop-in z-50">
               <p className="text-xs font-bold text-gray-500 uppercase mb-3 tracking-wider">Tema de color</p>
@@ -1058,11 +928,8 @@ function App() {
       {tycoonPanelOpen && (
         <div className="fixed inset-0 z-[60] pt-10 px-4 bg-black/10 backdrop-blur-sm transition-all flex items-center justify-center" onClick={() => setTycoonPanelOpen(false)}>
           <div className="w-full max-w-6xl liquid-glass p-8 pop-in shadow-2xl border-t-4 border-indigo-500 bg-white/80 h-[85vh] flex flex-col relative" onClick={(e) => e.stopPropagation()}>
-
             <button onClick={() => setTycoonPanelOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 rounded-full hover:bg-gray-200"><X size={24} /></button>
-
             <h2 className="text-3xl font-black text-gray-800 mb-6 flex items-center gap-2"><Activity className="text-indigo-600" /> Actividad de {username || currentUser}</h2>
-
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 mb-6 overflow-y-auto min-h-0">
               <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col h-64 lg:h-auto">
                 <h4 className="font-bold text-gray-600 mb-4">Actividad Semanal</h4>
@@ -1074,7 +941,6 @@ function App() {
                 <DonutChart tasks={tasks} />
               </div>
             </div>
-
             <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner overflow-hidden flex-1 flex flex-col min-h-[200px]">
               <div className="grid grid-cols-5 gap-4 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-300/50 pb-3 mb-2">
                 <div className="flex items-center gap-1"><Calendar size={14} /> Fecha</div>
@@ -1102,23 +968,17 @@ function App() {
                           <div className={`w-3 h-3 rounded-full ${t.completed ? "bg-green-500" : t.inProgress ? "bg-blue-500" : "bg-gray-300"}`}></div>
                         </div>
                       </div>
-                      <div className={`flex justify-end gap-0.5 ${starColor}`}>
-                        {[...Array(starCount)].map((_, i) => <Star key={i} size={12} fill="currentColor" />)}
-                      </div>
+                      <div className={`flex justify-end gap-0.5 ${starColor}`}>{[...Array(starCount)].map((_, i) => <Star key={i} size={12} fill="currentColor" />)}</div>
                     </div>
                   )
                 })}
-                {tasks.length === 0 && <p className="text-center text-gray-400 py-4 italic text-sm">No hay actividad registrada.</p>}
               </div>
             </div>
           </div>
         </div>
       )}
 
-      <div
-        className={`fixed bottom-0 left-1/2 -translate-x-1/2 w-[95%] sm:w-[90%] max-w-3xl z-[30] transition-transform duration-500 cubic-bezier(0.4, 0, 0.2, 1) cursor-pointer ${isBannerExpanded ? 'translate-y-[-20px]' : 'translate-y-[72%]'}`}
-        onClick={() => setIsBannerExpanded(!isBannerExpanded)}
-      >
+      <div className={`fixed bottom-0 left-1/2 -translate-x-1/2 w-[95%] sm:w-[90%] max-w-3xl z-[30] transition-transform duration-500 cubic-bezier(0.4, 0, 0.2, 1) cursor-pointer ${isBannerExpanded ? 'translate-y-[-20px]' : 'translate-y-[72%]'}`} onClick={() => setIsBannerExpanded(!isBannerExpanded)}>
         <div className="liquid-glass px-6 pb-6 pt-3 shadow-2xl border-t border-white/70 bg-white/60 hover:bg-white/70 transition-colors">
           <div className="w-16 h-1.5 bg-gray-300 rounded-full mx-auto mb-4 opacity-60"></div>
           <div className="flex justify-between items-center">
@@ -1129,36 +989,14 @@ function App() {
             <div className="transform transition-transform duration-500" style={{ transform: isBannerExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}><ChevronUp size={20} className="text-gray-400" /></div>
           </div>
           <div className="mt-6 pt-6 border-t border-gray-200/50 flex justify-between items-center opacity-90">
-            <div className="text-xs text-gray-600 space-y-1">
-              <p><strong>1.</strong> Inicia tareas para activar al leñador.</p>
-              <p><strong>2.</strong> Sube tu evidencia antes de que expire.</p>
-              <p><strong>3.</strong> ¡Cuidado! Si expira pierdes monedas.</p>
-            </div>
+            <div className="text-xs text-gray-600 space-y-1"><p><strong>1.</strong> Inicia tareas para activar al leñador.</p><p><strong>2.</strong> Sube tu evidencia antes de que expire.</p><p><strong>3.</strong> ¡Cuidado! Si expira pierdes monedas.</p></div>
             <button onClick={(e) => { e.stopPropagation(); setIsContactOpen(true); }} className="bg-indigo-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 transition flex items-center gap-2">Soporte <Mail size={14} /></button>
           </div>
         </div>
       </div>
 
-      <main
-        className="pt-0 pb-0 min-h-screen w-full h-screen overflow-hidden relative flex items-center justify-center bg-gradient-to-t from-indigo-900/20 to-transparent"
-        ref={containerRef}
-        onTouchStart={handleContainerTouchStart}
-        onTouchMove={handleContainerTouchMove}
-        style={{ touchAction: 'none' }}
-      >
-        <div
-          style={{
-            // IMPORTANTE: La transformación de pan/zoom SOLO se aplica si es móvil (isMobile es true)
-            transform: isMobile ? `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})` : 'none',
-            transformOrigin: 'center center',
-            transition: isDragging ? 'none' : 'transform 0.1s ease-out'
-          }}
-          className="w-full flex items-center justify-center pointer-events-auto"
-        >
-          {/* CLASES HÍBRIDAS:
-                Móvil: w-[1600px] h-[1000px] (Gigante fijo)
-                Escritorio (md:): w-full h-auto aspect-video (Responsivo original)
-            */}
+      <main className="pt-0 pb-0 min-h-screen w-full h-screen overflow-hidden relative flex items-center justify-center bg-gradient-to-t from-indigo-900/20 to-transparent" ref={containerRef} onTouchStart={handleContainerTouchStart} onTouchMove={handleContainerTouchMove} style={{ touchAction: 'none' }}>
+        <div style={{ transform: isMobile ? `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})` : 'none', transformOrigin: 'center center', transition: isDragging ? 'none' : 'transform 0.1s ease-out' }} className="w-full flex items-center justify-center pointer-events-auto">
           <div ref={parcelaRef} className="relative transition-all duration-500 md:w-full md:max-w-6xl md:aspect-video md:h-auto w-[1600px] h-[1000px] liquid-glass p-0 shadow-2xl group overflow-hidden shrink-0">
             <div className="absolute inset-0 bg-no-repeat bg-center opacity-90" style={{ backgroundImage: `url(${images.parcela})`, backgroundSize: 'cover' }}></div>
             <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/10 to-transparent pointer-events-none"></div>
@@ -1181,13 +1019,7 @@ function App() {
             </div>
 
             {parcelaObjects.map((obj) => (
-              <div
-                key={obj.id}
-                className={`absolute transition-transform active:scale-95 ${isDragging && draggedObjectId === obj.id ? "z-50 cursor-grabbing scale-110" : "z-10 cursor-grab hover:z-20"}`}
-                style={{ top: `${obj.position.top}%`, left: `${obj.position.left}%`, transform: 'translate(-50%, -50%)' }}
-                onMouseDown={(e) => handleDragStart(e, obj.id, obj.position)}
-                onTouchStart={(e) => handleDragStart(e, obj.id, obj.position)}
-              >
+              <div key={obj.id} className={`absolute transition-transform active:scale-95 ${isDragging && draggedObjectId === obj.id ? "z-50 cursor-grabbing scale-110" : "z-10 cursor-grab hover:z-20"}`} style={{ top: `${obj.position.top}%`, left: `${obj.position.left}%`, transform: 'translate(-50%, -50%)' }} onMouseDown={(e) => handleDragStart(e, obj.id, obj.position)} onTouchStart={(e) => handleDragStart(e, obj.id, obj.position)}>
                 <div className="relative group/obj">
                   <img src={(images.objects as any)[obj.objectId]} className={`${obj.objectId === "casa" ? "h-48 drop-shadow-2xl" : "h-20 drop-shadow-xl"} object-contain transition filter group-hover/obj:brightness-110`} style={{ imageRendering: "pixelated" }} draggable="false" />
                   {!isDragging && (

@@ -1,8 +1,9 @@
-import { doc, getDoc, setDoc, runTransaction, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, runTransaction, serverTimestamp, collection, query, where, getDocs, updateDoc, arrayUnion } from "firebase/firestore";
 import { db, auth } from "./firebaseConfig";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged as firebaseOnAuthStateChanged } from 'firebase/auth';
 
-// Guardar datos del usuario
+// --- TUS FUNCIONES EXISTENTES (MANTENLAS IGUAL) ---
+
 export async function saveUserData(userId: string, data: any) {
   try {
     await setDoc(doc(db, "users", userId), data, { merge: true });
@@ -12,16 +13,13 @@ export async function saveUserData(userId: string, data: any) {
   }
 }
 
-// Leer datos del usuario
 export async function getUserData(userId: string) {
   try {
     const docRef = doc(db, "users", userId);
     const docSnap = await getDoc(docRef);
-
     if (docSnap.exists()) {
       return docSnap.data();
     } else {
-      console.log("No se encontraron datos para este usuario");
       return null;
     }
   } catch (error) {
@@ -30,7 +28,6 @@ export async function getUserData(userId: string) {
   }
 }
 
-// Verificar si un username está disponible (simple check)
 export async function isUsernameAvailable(username: string) {
   try {
     const normalized = username.trim().toLowerCase();
@@ -43,9 +40,6 @@ export async function isUsernameAvailable(username: string) {
   }
 }
 
-// Registrar un username de forma atómica usando transacción
-// Lanza Error con message 'username-taken' si ya existe
-// Lanza Error con message 'user-already-has-username' si el usuario ya tiene username
 export async function registerUsername(username: string, uid: string) {
   const normalized = username.trim().toLowerCase();
   const usernameRef = doc(db, 'usernames', normalized);
@@ -65,8 +59,6 @@ export async function registerUsername(username: string, uid: string) {
     });
     return { success: true };
   } catch (err) {
-    console.error('registerUsername error:', err);
-    // Map Firestore permission error to a clearer message for the UI
     if ((err as any)?.code === 'permission-denied') {
       throw new Error('permission-denied');
     }
@@ -74,7 +66,6 @@ export async function registerUsername(username: string, uid: string) {
   }
 }
 
-// --- Auth helpers ---
 export async function signUpWithEmail(email: string, password: string) {
   return createUserWithEmailAndPassword(auth, email, password);
 }
@@ -89,4 +80,80 @@ export async function signOutUser() {
 
 export function onAuthStateChanged(callback: (user: any) => void) {
   return firebaseOnAuthStateChanged(auth, callback);
+}
+
+// --- NUEVAS FUNCIONES PARA EQUIPOS (AGREGAR AL FINAL) ---
+
+// Crear equipo
+export async function createTeam(teamName: string, creatorUid: string) {
+  const teamId = "team_" + Date.now();
+  const teamRef = doc(db, "teams", teamId);
+  const userRef = doc(db, "users", creatorUid);
+
+  try {
+    await runTransaction(db, async (tx) => {
+      tx.set(teamRef, {
+        name: teamName,
+        members: [creatorUid],
+        createdAt: serverTimestamp()
+      });
+      tx.update(userRef, { teamId: teamId });
+    });
+    return teamId;
+  } catch (error) {
+    console.error("Error creando equipo:", error);
+    throw error;
+  }
+}
+
+// Buscar equipo por nombre exacto
+export async function findTeamByName(name: string) {
+  try {
+    const teamsRef = collection(db, "teams");
+    const q = query(teamsRef, where("name", "==", name));
+    const querySnapshot = await getDocs(q);
+    if (querySnapshot.empty) return null;
+    const doc = querySnapshot.docs[0];
+    return { id: doc.id, ...doc.data() };
+  } catch (error) {
+    console.error("Error buscando equipo:", error);
+    return null;
+  }
+}
+
+// Unirse a equipo
+export async function joinTeam(teamId: string, uid: string) {
+  const teamRef = doc(db, "teams", teamId);
+  const userRef = doc(db, "users", uid);
+
+  try {
+    await runTransaction(db, async (tx) => {
+      const teamDoc = await tx.get(teamRef);
+      if (!teamDoc.exists()) throw new Error("El equipo no existe");
+      tx.update(teamRef, { members: arrayUnion(uid) });
+      tx.update(userRef, { teamId: teamId });
+    });
+    return true;
+  } catch (error) {
+    console.error("Error uniéndose:", error);
+    throw error;
+  }
+}
+
+// Obtener datos de la aldea (miembros)
+export async function getTeamVillageData(teamId: string) {
+  try {
+    const usersRef = collection(db, "users");
+    const q = query(usersRef, where("teamId", "==", teamId));
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({ 
+      uid: doc.id, 
+      username: doc.data().username || "Anonimo",
+      coins: doc.data().coins || 0,
+      // No traemos 'objects' pesados aquí para optimizar, solo info básica
+    }));
+  } catch (error) {
+    console.error("Error cargando aldea:", error);
+    return [];
+  }
 }
