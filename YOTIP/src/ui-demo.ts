@@ -1,4 +1,6 @@
 // ./src/ui-demo.ts
+// Integración Firebase
+import { getUserData, saveUserData } from "./firebaseUtils";
 // Lógica de UI, Drawers y Animaciones
 let totalMonedas: number = 500;
 let componentesComprados: number = 0;
@@ -23,8 +25,6 @@ const colorMap: Record<string, ColorTheme> = {
 // =======================================================
 
 export function updateCoinDisplays(): void {
-    totalMonedas = parseInt(localStorage.getItem('totalCoins') || '500');
-
     const displays = document.querySelectorAll('#total-coins-display, #main-coins-display, #header-coins-display');
     displays.forEach(el => {
         el.textContent = (el.id === 'header-coins-display' || el.id === 'total-coins-display') ? `${totalMonedas} 💰` : totalMonedas.toString();
@@ -230,11 +230,29 @@ function stopSittingAnimation(): void {
 // INICIALIZACIÓN Y LISTENERS
 // =======================================================
 
+import { onAuthStateChanged } from './firebaseUtils';
+
 document.addEventListener('DOMContentLoaded', () => {
-    // Inicializar monedas y sprites (Solo para la primera carga, React se encarga después)
-    localStorage.setItem('totalCoins', totalMonedas.toString()); 
-    updateCoinDisplays(); 
-    
+    let userId = 'defaultUser'; // fallback
+
+    // Esperar a que Auth esté listo y obtener uid para leer datos del usuario
+        onAuthStateChanged(async (user) => {
+        if (user) {
+            userId = user.uid;
+        } else {
+            // si no hay usuario autenticado, mantenemos defaultUser
+            userId = 'defaultUser';
+        }
+
+        // Leer monedas desde Firestore
+        const userData = await getUserData(userId);
+        totalMonedas = userData?.coins || 500;
+        updateCoinDisplays();
+
+        // Guardar monedas iniciales en Firestore
+        saveUserData(userId, { coins: totalMonedas });
+    });
+
     const lumberjack = document.getElementById('lumberjack-sprite') as HTMLImageElement | null;
     const tree = document.getElementById('tree-sprite') as HTMLImageElement | null;
     const parcel = document.getElementById('parcel-text');
@@ -244,7 +262,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (parcel) parcel.classList.remove('hidden');
 
     // --- ACTIVIDADES (Completar Tarea con Animación) ---
-    document.getElementById('task-list')?.addEventListener('click', (event: Event) => {
+    document.getElementById('task-list')?.addEventListener('click', async (event: Event) => {
         const targetElement = event.target instanceof HTMLElement ? event.target : null;
         const button = targetElement ? targetElement.closest('.complete-task') as HTMLButtonElement | null : null;
 
@@ -262,13 +280,16 @@ document.addEventListener('DOMContentLoaded', () => {
             startChoppingAnimation();
 
             // 3. Simular el tiempo de la tarea (3 segundos de corte)
-            setTimeout(() => {
+            setTimeout(async () => {
                 stopChoppingAnimation(); 
 
                 // 4. Sumar recompensa y actualizar UI
-                let currentCoins: number = parseInt(localStorage.getItem('totalCoins') || '500');
+                const userData = await getUserData(userId);
+                let currentCoins: number = userData?.coins || 500;
                 currentCoins += reward;
-                localStorage.setItem('totalCoins', currentCoins.toString());
+
+                await saveUserData(userId, { coins: currentCoins });
+                totalMonedas = currentCoins;
                 updateCoinDisplays(); 
                 
                 // 5. Marcar tarea como completada visualmente
@@ -295,21 +316,23 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // --- TIENDA (Comprar Componente) ---
-    document.getElementById('store-items')?.addEventListener('click', (event: Event) => {
+    document.getElementById('store-items')?.addEventListener('click', async (event: Event) => {
         const targetElement = event.target instanceof HTMLElement ? event.target : null;
         const button = targetElement ? targetElement.closest('.buy-item') as HTMLButtonElement | null : null;
-        
+
         if (button && !button.disabled) {
             const cost = parseInt(button.dataset.cost || '0');
             const item = button.dataset.item;
-            let currentCoins: number = parseInt(localStorage.getItem('totalCoins') || '500');
+            const userData = await getUserData(userId);
+            let currentCoins: number = userData?.coins || 500;
 
             if (currentCoins >= cost) {
                 currentCoins -= cost;
-                localStorage.setItem('totalCoins', currentCoins.toString());
+                await saveUserData(userId, { coins: currentCoins });
+                totalMonedas = currentCoins;
                 componentesComprados += 1;
                 updateCoinDisplays();
-                
+
                 const displayList = document.getElementById('purchased-items-display');
                 if (displayList) {
                     displayList.innerHTML += `<p class="mt-1">✅ ${item} <span class="text-xs text-green-600">(-${cost} 💰)</span></p>`;

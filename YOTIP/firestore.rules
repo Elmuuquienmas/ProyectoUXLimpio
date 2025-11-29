@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Cada usuario puede leer/editar su propio documento de usuarios
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Colección de mapeos username -> uid
+    match /usernames/{username} {
+      // Permitir consultar disponibilidad a usuarios autenticados
+      allow get: if request.auth != null;
+      // Crear el mapping solo si:
+      // - el cliente está autenticado
+      // - request.resource.data.uid === request.auth.uid (no pueden crear a nombre de otro)
+      // - y el documento NO existe todavía (evita sobreescrituras)
+      allow create: if request.auth != null
+                    && request.resource.data.uid == request.auth.uid
+                    && !exists(/databases/$(database)/documents/usernames/$(username));
+      // No permitimos updates/deletes desde el cliente por ahora (cambios mediante backend/funciones)
+      allow update, delete: if false;
+    }
+  }
+}
