@@ -1,24 +1,46 @@
 // src/firebaseUtils.ts
 
-// URL de tu json-server (asegúrate de correrlo en el puerto 3001)
-const API_URL = "/api";
+// --- CONFIGURACIÓN ---
+// Si estás en producción usa /api, si estás en local usa localhost:3001
+const isProduction = import.meta.env.PROD; 
+const API_URL = isProduction ? "/api" : "http://localhost:3001";
 
-// --- UTILIDADES DE AYUDA ---
+// --- SISTEMA DE NOTIFICACIONES (LA MAGIA) ---
+// Aquí guardamos las funciones que React nos da para avisarle
+let authListeners: ((user: any) => void)[] = [];
 
-// Función para simular un ID único (ya que no tenemos Firebase Auth)
+const notifyAuthListeners = async () => {
+  const uid = localStorage.getItem('local_auth_uid');
+  let user = null;
+
+  if (uid) {
+    try {
+      // Intentamos obtener datos frescos
+      const userData = await getUserData(uid);
+      if (userData) {
+        user = { uid: uid, email: userData.email };
+      }
+    } catch (e) {
+      console.error("Error validando sesión:", e);
+    }
+  }
+
+  // Avisamos a todas las partes de la App que estén escuchando
+  authListeners.forEach(listener => listener(user));
+};
+
 const generateId = () => 'user_' + Date.now() + Math.random().toString(36).substr(2, 9);
+
 
 // --- FUNCIONES DE BASE DE DATOS ---
 
 export async function saveUserData(userId: string, data: any) {
   try {
-    // En json-server, usamos PATCH para actualizar solo los campos enviados
     await fetch(`${API_URL}/users/${userId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
-    console.log("Datos guardados localmente");
   } catch (error) {
     console.error("Error al guardar datos:", error);
   }
@@ -30,7 +52,6 @@ export async function getUserData(userId: string) {
     if (!response.ok) return null;
     return await response.json();
   } catch (error) {
-    console.error("Error al leer datos:", error);
     return null;
   }
 }
@@ -38,24 +59,19 @@ export async function getUserData(userId: string) {
 export async function isUsernameAvailable(username: string) {
   try {
     const normalized = username.trim().toLowerCase();
-    // Buscamos si alguien ya tiene este username
     const response = await fetch(`${API_URL}/users?username=${normalized}`);
     const users = await response.json();
     return users.length === 0;
   } catch (error) {
-    console.error('Error comprobando username:', error);
     return false;
   }
 }
 
 export async function registerUsername(username: string, uid: string) {
   const normalized = username.trim().toLowerCase();
-  
-  // 1. Verificar disponibilidad de nuevo
   const available = await isUsernameAvailable(normalized);
   if (!available) throw new Error('username-taken');
 
-  // 2. Guardar en el usuario
   try {
     await fetch(`${API_URL}/users/${uid}`, {
       method: 'PATCH',
@@ -68,22 +84,18 @@ export async function registerUsername(username: string, uid: string) {
   }
 }
 
-// --- FUNCIONES DE AUTH SIMULADA ---
+// --- AUTHENTICATION (MODIFICADO PARA SER REACTIVO) ---
 
 export async function signUpWithEmail(email: string, password: string) {
-  // 1. Verificar si el email ya existe
   const checkRes = await fetch(`${API_URL}/users?email=${email}`);
   const existingUsers = await checkRes.json();
   
-  if (existingUsers.length > 0) {
-    throw new Error("El correo ya está registrado");
-  }
+  if (existingUsers.length > 0) throw new Error("El correo ya está registrado");
 
-  // 2. Crear usuario nuevo
   const newUser = {
     id: generateId(),
     email: email,
-    password: password, // NOTA: En un proyecto real, nunca guardes contraseñas en texto plano
+    password: password,
     createdAt: Date.now(),
     coins: 0,
     objects: [],
@@ -98,62 +110,58 @@ export async function signUpWithEmail(email: string, password: string) {
 
   const user = await createRes.json();
   
-  // Simular inicio de sesión guardando en localStorage
+  // 1. Guardamos en disco
   localStorage.setItem('local_auth_uid', user.id);
+  
+  // 2. ¡AVISAMOS A REACT DE INMEDIATO!
+  await notifyAuthListeners();
   
   return { user: { uid: user.id, email: user.email } };
 }
 
 export async function signInWithEmail(email: string, password: string) {
-  // Buscar usuario que coincida con email y password
   const response = await fetch(`${API_URL}/users?email=${email}&password=${password}`);
   const users = await response.json();
 
-  if (users.length === 0) {
-    throw new Error("Credenciales incorrectas");
-  }
+  if (users.length === 0) throw new Error("Credenciales incorrectas");
 
   const user = users[0];
+  
+  // 1. Guardamos en disco
   localStorage.setItem('local_auth_uid', user.id);
+
+  // 2. ¡AVISAMOS A REACT DE INMEDIATO!
+  await notifyAuthListeners();
   
   return { user: { uid: user.id, email: user.email } };
 }
 
 export async function signOutUser() {
   localStorage.removeItem('local_auth_uid');
-  // Recargar página para limpiar estados es lo más fácil en este cambio
-  window.location.reload(); 
+  // Avisamos que se cerró sesión (pasará null)
+  await notifyAuthListeners();
   return true;
 }
 
-// Simulamos el listener de Firebase comprobando localStorage
+// Esta es la función que usa tu App.tsx para "escuchar"
 export function onAuthStateChanged(callback: (user: any) => void) {
-  const storedUid = localStorage.getItem('local_auth_uid');
+  // Agregamos la función de App.tsx a nuestra lista de "contactos"
+  authListeners.push(callback);
   
-  if (storedUid) {
-    // Si hay ID guardado, obtenemos el usuario y ejecutamos el callback
-    getUserData(storedUid).then(userData => {
-      if (userData) {
-        callback({ uid: storedUid, email: userData.email });
-      } else {
-        localStorage.removeItem('local_auth_uid');
-        callback(null);
-      }
-    });
-  } else {
-    callback(null);
-  }
+  // Ejecutamos una vez al inicio para ver si ya había sesión guardada
+  notifyAuthListeners();
 
-  // Retornamos una función vacía para simular el unsubscribe
-  return () => {}; 
+  // Devolvemos una función para dejar de escuchar (limpieza)
+  return () => {
+    authListeners = authListeners.filter(l => l !== callback);
+  };
 }
 
-// --- FUNCIONES DE EQUIPOS (ADAPTADAS) ---
+// --- EQUIPOS ---
 
 export async function createTeam(teamName: string, creatorUid: string) {
   const teamId = "team_" + Date.now();
   
-  // 1. Crear el equipo
   await fetch(`${API_URL}/teams`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -165,7 +173,6 @@ export async function createTeam(teamName: string, creatorUid: string) {
     })
   });
 
-  // 2. Actualizar al usuario
   await fetch(`${API_URL}/users/${creatorUid}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -181,17 +188,13 @@ export async function findTeamByName(name: string) {
     const teams = await response.json();
     return teams.length > 0 ? teams[0] : null;
   } catch (error) {
-    console.error("Error buscando equipo:", error);
     return null;
   }
 }
 
 export async function joinTeam(teamId: string, uid: string) {
-  // 1. Obtener equipo actual para ver sus miembros
   const teamRes = await fetch(`${API_URL}/teams/${teamId}`);
   const team = await teamRes.json();
-
-  // 2. Agregar usuario al array de miembros (evitando duplicados)
   const newMembers = [...new Set([...team.members, uid])];
 
   await fetch(`${API_URL}/teams/${teamId}`, {
@@ -200,7 +203,6 @@ export async function joinTeam(teamId: string, uid: string) {
     body: JSON.stringify({ members: newMembers })
   });
 
-  // 3. Asignar teamId al usuario
   await fetch(`${API_URL}/users/${uid}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -212,17 +214,14 @@ export async function joinTeam(teamId: string, uid: string) {
 
 export async function getTeamVillageData(teamId: string) {
   try {
-    // json-server permite filtrar usuarios por teamId directamente
     const response = await fetch(`${API_URL}/users?teamId=${teamId}`);
     const users = await response.json();
-    
     return users.map((u: any) => ({
       uid: u.id,
       username: u.username || "Anonimo",
       coins: u.coins || 0
     }));
   } catch (error) {
-    console.error("Error cargando aldea:", error);
     return [];
   }
 }
