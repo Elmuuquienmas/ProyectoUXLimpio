@@ -1,11 +1,10 @@
-// src/firebaseConfig.ts
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
-// DATOS DUROS (HARDCODED) - SI ESTO NO FUNCIONA, ES CULPA DE GOOGLE
+// Configuración con la CLAVE VIEJA (AIzaSyD3...)
 const firebaseConfig = {
-  apiKey: "AIzaSyCp6KbX3t56efANf7_w9pJOKwAaOxroKFo",
+  apiKey: "AIzaSyD3gG3qM5A1tow777bsfZ1jJd5zmJrkQq0", // <--- Clave Vieja
   authDomain: "yourtime-proyecto-escuela.firebaseapp.com",
   projectId: "yourtime-proyecto-escuela",
   storageBucket: "yourtime-proyecto-escuela.firebasestorage.app",
@@ -13,7 +12,7 @@ const firebaseConfig = {
   appId: "1:666837926457:web:617ebfbaa7dd46b20a83e8"
 };
 
-// Inicializar Firebase
+// Inicializar
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
