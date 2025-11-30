@@ -56,12 +56,21 @@ export async function getUserData(userId: string) {
   }
 }
 
-export async function isUsernameAvailable(username: string) {
+export async function isUsernameAvailable(username: string, excludeUid?: string) {
   try {
     const normalized = username.trim().toLowerCase();
     const response = await fetch(`${API_URL}/users?username=${normalized}`);
     const users = await response.json();
-    return users.length === 0;
+    
+    // Si encontramos usuarios con ese nombre...
+    if (users.length > 0) {
+      // Verificamos si alguno de ellos SOY YO.
+      // Si el único que tiene el nombre soy yo, entonces SÍ está disponible (para mí).
+      const others = users.filter((u: any) => u.id !== excludeUid);
+      return others.length === 0;
+    }
+
+    return true; // Si no hay nadie, está libre.
   } catch (error) {
     return false;
   }
@@ -69,15 +78,24 @@ export async function isUsernameAvailable(username: string) {
 
 export async function registerUsername(username: string, uid: string) {
   const normalized = username.trim().toLowerCase();
-  const available = await isUsernameAvailable(normalized);
+  
+  // AQUI EL CAMBIO CLAVE: 
+  // Le pasamos tu 'uid' para decirle: "Revisa si el nombre está libre, pero ignórame a mí"
+  const available = await isUsernameAvailable(normalized, uid);
+  
   if (!available) throw new Error('username-taken');
 
+  // Si llegamos aquí, procedemos a guardar (o re-guardar)
   try {
     await fetch(`${API_URL}/users/${uid}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: normalized })
     });
+    
+    // Forzamos actualización de la interfaz para que se cierre el modal
+    await notifyAuthListeners(); 
+    
     return { success: true };
   } catch (err) {
     throw err;
