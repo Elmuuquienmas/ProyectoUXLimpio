@@ -1,38 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { getUserData, saveUserData, signInWithEmail, signUpWithEmail, signOutUser, onAuthStateChanged, registerUsername, isUsernameAvailable } from "./firebaseUtils";
+import { useAuth } from "./hooks/useAuth";
+import { useGameEngine } from "./hooks/useGameEngine";
+import { registerUsername } from "./hooks/supabaseUtils"; 
+
 import type { Task, ParcelaObject, ViewTransform, StoreItem, Toast } from './types';
 import {
-  ShoppingCart,
-  ListTodo,
-  Settings,
-  DollarSign,
-  BarChart4,
-  X,
-  Plus,
-  Zap,
-  Heart,
-  Cat,
-  Home,
-  Sparkles,
-  Pencil,
-  AlertTriangle,
-  Info,
-  ThumbsUp,
-  Trash2,
-  Clock,
-  User,
-  LogOut,
-  Calendar,
-  Activity,
-  Star,
-  HelpCircle,
-  Mail,
-  MessageCircle,
-  ChevronUp,
-  Upload,
-  Image as ImageIcon,
-  Maximize2,
-  Loader2,
+  ShoppingCart, ListTodo, Settings, DollarSign, BarChart4, X, Plus, Zap, Heart, Cat, Home,
+  Sparkles, Pencil, AlertTriangle, Info, ThumbsUp, Trash2, Clock, User, LogOut, Calendar,
+  Activity, Star, HelpCircle, Mail, ChevronUp, Upload, Image as ImageIcon, Loader2,
 } from "lucide-react";
 
 // --- IMÁGENES ---
@@ -72,21 +47,9 @@ const compressImage = (file: File): Promise<string> => {
         const MAX_HEIGHT = 600;
         let width = img.width;
         let height = img.height;
-
-        if (width > height) {
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
-          }
-        } else {
-          if (height > MAX_HEIGHT) {
-            width *= MAX_HEIGHT / height;
-            height = MAX_HEIGHT;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
+        if (width > height) { if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; } } 
+        else { if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; } }
+        canvas.width = width; canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (!ctx) return reject(new Error('Cannot get canvas context'));
         ctx.drawImage(img, 0, 0, width, height);
@@ -98,43 +61,25 @@ const compressImage = (file: File): Promise<string> => {
   });
 };
 
-const DEFAULT_TASKS: Task[] = [
-  { id: 1, name: "Leer 1 artículo", reward: 10, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
-  { id: 2, name: "Organizar correo", reward: 25, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
-  { id: 3, name: "Ejercicio 30 min", reward: 50, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
-];
-
-const getDistance = (touches: any): number => {
-  return Math.hypot(
-    touches[0].clientX - touches[1].clientX,
-    touches[0].clientY - touches[1].clientY
-  );
-};
-
-const getMidpoint = (touches: any) => {
-  return {
-    x: (touches[0].clientX + touches[1].clientX) / 2,
-    y: (touches[0].clientY + touches[1].clientY) / 2,
-  };
-};
+const getDistance = (touches: any): number => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+const getMidpoint = (touches: any) => ({ x: (touches[0].clientX + touches[1].clientX) / 2, y: (touches[0].clientY + touches[1].clientY) / 2 });
 
 function App() {
-  const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const { currentUser, authLoading, loginError, login, signup, logout, setLoginError } = useAuth();
+  
+  const { 
+    coins, parcelaObjects, tasks, username, theme, 
+    isDataLoaded, isSaving, showUsernameModal, setShowUsernameModal, saveUsername, saveTheme,
+    buyItem, setParcelaObjects, objectsRef, smartSave, 
+    completeTask, saveNewTask, updateTaskStatus, resetTasks, switchActiveTask // <--- IMPORTANTE
+  } = useGameEngine(currentUser);
+
+  // UI States
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSignup, setIsSignup] = useState(false);
   const [signupPrompt, setSignupPrompt] = useState(false);
-  const [signupPromptMessage, setSignupPromptMessage] = useState("");
-  const [loginErrorMessage, setLoginErrorMessage] = useState<string>("");
-  const [isDataLoaded, setIsDataLoaded] = useState(false);
-  const [authLoading, setAuthLoading] = useState(false);
-
-  const [coins, setCoins] = useState<number>(0);
-  const [parcelaObjects, setParcelaObjects] = useState<ParcelaObject[]>([]);
-  const objectsRef = useRef<ParcelaObject[]>(parcelaObjects);
-  const [tasks, setTasks] = useState<Task[]>([]);
-
-  // UI States
+  
   const [storeDrawerOpen, setStoreDrawerOpen] = useState(false);
   const [activitiesDrawerOpen, setActivitiesDrawerOpen] = useState(false);
   const [configDropdownOpen, setConfigDropdownOpen] = useState(false);
@@ -143,26 +88,21 @@ function App() {
   const [isBannerExpanded, setIsBannerExpanded] = useState(false);
   const [isAddTaskModalOpen, setIsAddTaskModalOpen] = useState(false);
   
-  const [username, setUsername] = useState<string | null>(null);
-  const [usernameModalOpen, setUsernameModalOpen] = useState(false);
   const [desiredUsername, setDesiredUsername] = useState("");
   const [usernameError, setUsernameError] = useState("");
   const [usernameChecking, setUsernameChecking] = useState(false);
-
-  const [isSaving, setIsSaving] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-
-  useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
 
   const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
   const [animationState, setAnimationState] = useState("idle");
   const [lumberjackFrame, setLumberjackFrame] = useState(0);
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
+
+  // --- ESTADOS NUEVOS ---
+  const [restEndTime, setRestEndTime] = useState<number | null>(null);
+  const taskStartTimes = useRef<{ [key: number]: number }>({}); 
+  const clickCounterRef = useRef<{ id: number, count: number, lastTime: number }>({ id: 0, count: 0, lastTime: 0 });
 
   // Drag & Zoom
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -177,160 +117,38 @@ function App() {
   const [taskToCompleteId, setTaskToCompleteId] = useState<number | null>(null);
   const [isResetConfirming, setIsResetConfirming] = useState(false);
   const resetTimeoutRef = useRef<number | null>(null);
-
   const [toast, setToast] = useState<Toast>({ message: "", visible: false, type: "success" });
 
   const isAnyMenuOpen = storeDrawerOpen || activitiesDrawerOpen || tycoonPanelOpen || isContactOpen || isAddTaskModalOpen;
 
-  const showToast = useCallback((message: string, type: /*ToastType*/ any = "success") => {
-    setToast({ message, visible: true, type });
-    setTimeout(() => setToast((prev) => ({ ...prev, visible: false })), 4000);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  useEffect(() => {
-    objectsRef.current = parcelaObjects;
-  }, [parcelaObjects]);
+  useEffect(() => { changeThemeColor(theme, false); }, [theme]);
 
-  useEffect(() => {
-    const unsub = onAuthStateChanged((user) => {
-      if (user) {
-        setCurrentUser(user.uid);
-      } else {
-        setCurrentUser(null);
-      }
-      setIsDataLoaded(false);
-    });
-    return () => unsub && unsub();
-  }, []);
-
-  const smartSave = async (dataToSave: any) => {
-      if (!currentUser) return;
-      setIsSaving(true);
-      try {
-          await saveUserData(currentUser, dataToSave);
-      } catch (error) {
-          console.error("Error al guardar:", error);
-      } finally {
-          setTimeout(() => setIsSaving(false), 800);
-      }
-  };
-
-  const objectsSaveRef = useRef<number | null>(null);
-  const tasksSaveRef = useRef<number | null>(null);
-
-  // --- CARGA DE DATOS CORREGIDA (Lógica de Rescate) ---
-  useEffect(() => {
-    let mounted = true;
-    async function loadUserData() {
-      if (!currentUser) { setIsDataLoaded(false); return; }
-      
-      try {
-        const data = await getUserData(currentUser);
-        if (!mounted) return;
-
-        if (data) {
-          // 1. Datos de Firebase
-          let loadedObjects = Array.isArray(data.objects) ? data.objects : [];
-          
-          // 2. Verificar LocalStorage
-          const localBackupStr = localStorage.getItem(`${currentUser}_objects`);
-          if (localBackupStr) {
-              try {
-                  const localBackup = JSON.parse(localBackupStr);
-                  if (Array.isArray(localBackup)) {
-                      // --- CORRECCIÓN CRÍTICA ---
-                      // Si el backup local tiene MÁS objetos que Firebase, confiamos en el local.
-                      // Esto arregla el problema de que el F5 borre objetos no guardados.
-                      if (localBackup.length > loadedObjects.length) {
-                          console.warn("⚠️ Recuperando datos locales (son más recientes)...");
-                          loadedObjects = localBackup;
-                          smartSave({ objects: loadedObjects }); // Actualizamos la nube
-                      }
-                  }
-              } catch(e) {}
-          }
-
-          setCoins(typeof data.coins === 'number' ? data.coins : 0);
-          setParcelaObjects(loadedObjects);
-          objectsRef.current = loadedObjects; 
-          setTasks(Array.isArray(data.tasks) ? (data.tasks as Task[]).map((t: Task) => ({ ...t, archived: t.archived || false })) : DEFAULT_TASKS);
-          setUsername(data.username || null);
-          
-          if (!data.username) setUsernameModalOpen(true);
-          changeThemeColor(data.theme || 'indigo', false);
-          
-        } else {
-          // Usuario Nuevo o sin datos en nube
-          const localCoins = parseInt(localStorage.getItem(`${currentUser}_coins`) || '0');
-          let localObjects: ParcelaObject[] = [];
-          try { localObjects = JSON.parse(localStorage.getItem(`${currentUser}_objects`) || '[]'); } catch(e) {}
-          let localTasks: Task[] = DEFAULT_TASKS;
-          try { 
-             const parsed = JSON.parse(localStorage.getItem(`${currentUser}_tasks`) || '[]');
-             if(Array.isArray(parsed) && parsed.length > 0) localTasks = parsed;
-          } catch(e) {}
-          const localTheme = localStorage.getItem(`${currentUser}_theme`) || 'indigo';
-
-          setCoins(localCoins);
-          setParcelaObjects(localObjects);
-          objectsRef.current = localObjects;
-          setTasks(localTasks);
-          setUsername(null);
-          setUsernameModalOpen(true);
-          changeThemeColor(localTheme, false);
-
-          await smartSave({ 
-             coins: localCoins, 
-             objects: localObjects, 
-             tasks: localTasks, 
-             theme: localTheme 
-          });
-        }
-        
-        setIsDataLoaded(true);
-
-      } catch (err) {
-        console.error('Error cargando:', err);
-        setIsDataLoaded(true); 
-      }
-    }
-
-    loadUserData();
-    return () => { mounted = false; };
-  }, [currentUser]);
-
-  useEffect(() => {
-    if (currentUser && isDataLoaded) {
-      localStorage.setItem(`${currentUser}_coins`, coins.toString());
-      smartSave({ coins });
-    }
-  }, [coins, currentUser, isDataLoaded]);
-
-  useEffect(() => {
-    if (currentUser && isDataLoaded && !isDragging) {
-      localStorage.setItem(`${currentUser}_objects`, JSON.stringify(parcelaObjects));
-      if (objectsSaveRef.current) window.clearTimeout(objectsSaveRef.current);
-      objectsSaveRef.current = window.setTimeout(() => {
-        smartSave({ objects: parcelaObjects });
-      }, 1000);
-    }
-  }, [parcelaObjects, currentUser, isDataLoaded, isDragging]);
-
-  useEffect(() => {
-    if (currentUser && isDataLoaded) {
-      localStorage.setItem(`${currentUser}_tasks`, JSON.stringify(tasks));
-      if (tasksSaveRef.current) window.clearTimeout(tasksSaveRef.current);
-      tasksSaveRef.current = window.setTimeout(() => {
-        smartSave({ tasks });
-      }, 1000);
-    }
-  }, [tasks, currentUser, isDataLoaded]);
-
+  // --- CEREBRO DE ANIMACIONES ---
   useEffect(() => {
     const activeTask = tasks.find(t => t.inProgress && !t.archived);
-    if (activeTask) { setActiveTaskId(activeTask.id); setAnimationState('chopping'); }
-    else { setActiveTaskId(null); setAnimationState('idle'); }
-  }, [tasks]);
+
+    if (activeTask) {
+      setActiveTaskId(activeTask.id);
+      setAnimationState('chopping');
+      setRestEndTime(null); 
+    } else {
+      setActiveTaskId(null);
+      if (restEndTime && Date.now() < restEndTime) {
+        setAnimationState('sitting');
+        const remainingTime = restEndTime - Date.now();
+        const timer = setTimeout(() => { setRestEndTime(null); }, remainingTime);
+        return () => clearTimeout(timer);
+      } else {
+        setAnimationState('idle');
+      }
+    }
+  }, [tasks, restEndTime]);
 
   useEffect(() => {
       let interval: number | undefined;
@@ -340,6 +158,11 @@ function App() {
       return () => { if (interval !== undefined) window.clearInterval(interval); };
   }, [animationState]);
 
+  const showToast = useCallback((message: string, type: any = "success") => {
+    setToast({ message, visible: true, type });
+    setTimeout(() => setToast((prev) => ({ ...prev, visible: false })), 4000);
+  }, []);
+
   const closeAllMenus = () => { setConfigDropdownOpen(false); setTycoonPanelOpen(false); setIsContactOpen(false); setIsBannerExpanded(false); };
   const toggleStoreDrawer = () => { closeAllMenus(); setStoreDrawerOpen(!storeDrawerOpen); };
   const toggleActivitiesDrawer = () => { closeAllMenus(); setActivitiesDrawerOpen(!activitiesDrawerOpen); };
@@ -348,54 +171,17 @@ function App() {
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setAuthLoading(true);
-    try {
-      await signInWithEmail(email.trim(), password);
-      setEmail(""); setPassword("");
-      showToast('Sesión iniciada', 'success');
-    } catch (err: any) {
-       setLoginErrorMessage("Error al iniciar sesión");
-    } finally {
-      setAuthLoading(false);
-    }
+    const success = await login(email.trim(), password);
+    if (success) { setEmail(""); setPassword(""); showToast('Sesión iniciada', 'success'); }
   };
 
   const handleSignup = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setAuthLoading(true);
-    try {
-      await signUpWithEmail(email.trim(), password);
-      setEmail(""); setPassword("");
-      showToast('Cuenta creada', 'success');
-    } catch (err: any) {
-      showToast(err.message, 'error');
-    } finally {
-      setAuthLoading(false);
-    }
+    const success = await signup(email.trim(), password);
+    if (success) { setEmail(""); setPassword(""); showToast('Cuenta creada', 'success'); }
   };
 
-  const createAccount = async () => {
-    setAuthLoading(true);
-    try {
-      await signUpWithEmail(email.trim(), password);
-      setSignupPrompt(false);
-      setEmail(""); setPassword("");
-      showToast('Cuenta creada', 'success');
-    } catch (err: any) {
-      showToast(err.message, 'error');
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  const handleLogout = async () => {
-    if (!confirm("¿Cerrar sesión?")) return;
-    await signOutUser();
-    setIsDataLoaded(false);
-    setCurrentUser(null);
-    setParcelaObjects([]);
-    setTasks([]);
-  };
+  const handleLogout = async () => { if (confirm("¿Cerrar sesión?")) await logout(); };
 
   const handleUsernameSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -404,117 +190,113 @@ function App() {
     setUsernameChecking(true);
     try {
       await registerUsername(val, currentUser);
-      setUsername(val);
-      setUsernameModalOpen(false);
+      saveUsername(val);
+      setShowUsernameModal(false);
       showToast('Nombre guardado', 'success');
-    } catch (err: any) {
-      setUsernameError('Error al guardar o nombre en uso');
-    } finally {
-      setUsernameChecking(false);
-    }
+    } catch (err: any) { setUsernameError(err.message || 'Error'); } finally { setUsernameChecking(false); }
   };
 
   const handleBuyItem = (item: StoreItem) => {
     if (isAnimating) return;
-    if (coins >= item.cost) {
-      const newCoins = coins - item.cost;
-      const newObj: ParcelaObject = { 
-          id: Date.now() + Math.random(), 
-          name: item.name, 
-          objectId: item.objectId || '', 
-          lucideIcon: item.lucideIcon, 
-          cost: item.cost, 
-          position: { top: 50, left: 50 } 
-      };
-
-      setCoins(newCoins);
-      const newObjects = [...parcelaObjects, newObj];
-      setParcelaObjects(newObjects);
-      objectsRef.current = newObjects;
-
-      localStorage.setItem(`${currentUser}_objects`, JSON.stringify(newObjects));
-      localStorage.setItem(`${currentUser}_coins`, newCoins.toString());
-      smartSave({ coins: newCoins, objects: newObjects });
-
-      showToast("Comprado", "success");
-    } else showToast("Faltan monedas", "error");
+    const success = buyItem(item);
+    if (success) showToast("Comprado", "success"); else showToast("Faltan monedas", "error");
   };
 
   const removeParcelaObject = (id: string | number) => {
     const newObjects = parcelaObjects.filter(o => o.id !== id);
-    setParcelaObjects(newObjects);
-    objectsRef.current = newObjects;
-    localStorage.setItem(`${currentUser}_objects`, JSON.stringify(newObjects));
+    setParcelaObjects(newObjects); 
     smartSave({ objects: newObjects });
   };
 
   const handleAddTask = (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
       const target = e.currentTarget as any;
-      const name = target.taskName.value;
-      const reward = parseInt(target.taskReward.value);
-      const deadline = target.taskDeadline.value;
-      
-      const newTasks = [...tasks, { id: Date.now(), name, reward, completed: false, inProgress: false, deadline: deadline || null, proofImage: null, archived: false }];
-      setTasks(newTasks);
+      saveNewTask({ 
+        id: Date.now(), name: target.taskName.value, reward: parseInt(target.taskReward.value), 
+        deadline: target.taskDeadline.value || null, completed: false, inProgress: false, proofImage: null, archived: false 
+      });
       setIsAddTaskModalOpen(false);
-      smartSave({ tasks: newTasks });
   };
 
+  // --- BOTÓN INICIAR (UN SOLO CLICK) ---
   const handleStartTask = (id: number) => {
-      const newTasks = tasks.map(t => t.id === id ? { ...t, inProgress: true } : { ...t, inProgress: false });
-      setTasks(newTasks);
-      smartSave({ tasks: newTasks });
+      // VALIDACIÓN: No permite iniciar si ya hay otra activa
+      const isAnyTaskActive = tasks.some(t => t.inProgress && !t.archived);
+      if (isAnyTaskActive) { showToast("¡Termina tu tarea actual primero!", "error"); return; }
+
+      taskStartTimes.current[id] = Date.now();
+      setRestEndTime(null);
+      updateTaskStatus(id, true); 
+  };
+
+  // --- LÓGICA DE 5 CLICKS: CAMBIO FORZADO ---
+  const handleTaskCardClick = (task: Task) => {
+    if (task.completed || task.archived) return;
+    if (task.inProgress) return; // Si ya es la activa, no hacemos nada
+
+    const now = Date.now();
+    // Detectar clicks rápidos (< 500ms)
+    if (clickCounterRef.current.id === task.id && now - clickCounterRef.current.lastTime < 500) {
+      clickCounterRef.current.count++;
+    } else {
+      clickCounterRef.current = { id: task.id, count: 1, lastTime: now };
+    }
+    clickCounterRef.current.lastTime = now;
+
+    // ¡5 CLICKS DETECTADOS! -> EJECUTAR CAMBIO
+    if (clickCounterRef.current.count >= 5) {
+      setIsAnimating(true); 
+      
+      // 1. Guardamos la hora de inicio de la NUEVA tarea
+      taskStartTimes.current[task.id] = Date.now();
+      
+      // 2. Cancelamos cualquier descanso si había
+      setRestEndTime(null);
+
+      // 3. Ejecutamos el cambio en el motor (apaga la anterior, prende esta)
+      switchActiveTask(task.id);
+      
+      showToast(`¡Cambiando a: ${task.name}!`, "success");
+      clickCounterRef.current.count = 0; // Reset contador
+      
+      setTimeout(() => setIsAnimating(false), 300);
+    }
   };
 
   const triggerFileUpload = (taskId: number) => {
       setTaskToCompleteId(taskId);
-      if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-          fileInputRef.current.click();
-      }
+      if (fileInputRef.current) { fileInputRef.current.value = ''; fileInputRef.current.click(); }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files ? e.target.files[0] : null;
       if (!file || !taskToCompleteId) return;
-      
       try {
           setIsAnimating(true);
           const base64 = await compressImage(file);
-          
           const task = tasks.find(t => t.id === taskToCompleteId);
-          const reward = task ? task.reward : 0;
-          
-          const newTasks = tasks.map(t => t.id === taskToCompleteId ? { ...t, completed: true, inProgress: false, proofImage: base64 } : t);
-          setTasks(newTasks);
-          
-          const newCoins = coins + reward;
-          setCoins(newCoins);
-
-          smartSave({ tasks: newTasks, coins: newCoins });
-          
-          showToast(`¡+${reward} monedas!`, 'success');
-          setIsAnimating(false);
-      } catch (e) {
-          setIsAnimating(false);
-          showToast("Error procesando imagen", 'error');
-      }
-      setTaskToCompleteId(null);
+          if (task) { 
+             completeTask(taskToCompleteId, task.reward, base64); 
+             showToast(`¡+${task.reward} monedas!`, 'success'); 
+             
+             // CALCULO DEL DESCANSO
+             const startTime = taskStartTimes.current[taskToCompleteId];
+             let duration = 5000;
+             if (startTime) duration = Date.now() - startTime;
+             setRestEndTime(Date.now() + duration);
+          }
+      } catch (e) { showToast("Error imagen", 'error'); } finally { setIsAnimating(false); setTaskToCompleteId(null); }
   };
 
   const handleDeleteAllTasks = () => {
     if (isResetConfirming) {
-      setTasks(prev => prev.map(t => ({ ...t, archived: true, inProgress: false })));
-      setActiveTaskId(null);
-      setAnimationState("idle");
-      setIsResetConfirming(false);
+      resetTasks(); setActiveTaskId(null); setAnimationState("idle"); setIsResetConfirming(false);
     } else {
-      setIsResetConfirming(true);
-      resetTimeoutRef.current = setTimeout(() => setIsResetConfirming(false), 3000);
+      setIsResetConfirming(true); resetTimeoutRef.current = window.setTimeout(() => setIsResetConfirming(false), 3000);
     }
   };
 
+  // --- DRAG LOGIC ---
   const handleDragStart = (e: React.MouseEvent | React.TouchEvent, id: string | number, pos: { top: number; left: number }) => {
     if (e.type === 'touchstart' && (e as React.TouchEvent).touches && (e as React.TouchEvent).touches.length > 1) return;
     (e as React.UIEvent).stopPropagation();
@@ -542,42 +324,34 @@ function App() {
     const clientX = (e as TouchEvent).type && (e as TouchEvent).type.includes('touch') ? (e as TouchEvent).touches[0].clientX : (e as MouseEvent).clientX;
     const clientY = (e as TouchEvent).type && (e as TouchEvent).type.includes('touch') ? (e as TouchEvent).touches[0].clientY : (e as MouseEvent).clientY;
     const rect = parcelaRef.current.getBoundingClientRect();
+    
     let left = Math.max(0, Math.min(100, ((clientX - rect.left - dragOffset.current.x) / rect.width) * 100));
     let top = Math.max(0, Math.min(100, ((clientY - rect.top - dragOffset.current.y) / rect.height) * 100));
+    
     setParcelaObjects(prev => prev.map(o => o.id === draggedObjectId ? { ...o, position: { top, left } } : o));
-  }, [isDragging, draggedObjectId]);
+  }, [isDragging, draggedObjectId, setParcelaObjects]);
 
   const handleDragEnd = async () => {
     setIsDragging(false);
     setDraggedObjectId(null);
-
-    if (currentUser && objectsRef.current.length > 0) {
-      const currentObjs = objectsRef.current;
-      localStorage.setItem(`${currentUser}_objects`, JSON.stringify(currentObjs));
-      smartSave({ objects: currentObjs });
-    }
+    if (currentUser && objectsRef.current.length > 0) { smartSave({ objects: objectsRef.current }); }
   };
 
   useEffect(() => {
     if (isDragging) {
-      window.addEventListener('mousemove', handleDrag);
-      window.addEventListener('mouseup', handleDragEnd);
-      window.addEventListener('touchmove', handleDrag, { passive: false });
-      window.addEventListener('touchend', handleDragEnd);
+      window.addEventListener('mousemove', handleDrag); window.addEventListener('mouseup', handleDragEnd);
+      window.addEventListener('touchmove', handleDrag, { passive: false }); window.addEventListener('touchend', handleDragEnd);
     } else {
-      window.removeEventListener('mousemove', handleDrag);
-      window.removeEventListener('mouseup', handleDragEnd);
-      window.removeEventListener('touchmove', handleDrag);
-      window.removeEventListener('touchend', handleDragEnd);
+      window.removeEventListener('mousemove', handleDrag); window.removeEventListener('mouseup', handleDragEnd);
+      window.removeEventListener('touchmove', handleDrag); window.removeEventListener('touchend', handleDragEnd);
     }
     return () => {
-      window.removeEventListener('mousemove', handleDrag);
-      window.removeEventListener('mouseup', handleDragEnd);
-      window.removeEventListener('touchmove', handleDrag);
-      window.removeEventListener('touchend', handleDragEnd);
+      window.removeEventListener('mousemove', handleDrag); window.removeEventListener('mouseup', handleDragEnd);
+      window.removeEventListener('touchmove', handleDrag); window.removeEventListener('touchend', handleDragEnd);
     };
   }, [isDragging, handleDrag]);
 
+  // --- TOUCH / ZOOM ---
   const handleContainerTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (!isMobile || isAnyMenuOpen) return;
     if (e.touches.length === 2) {
@@ -608,27 +382,17 @@ function App() {
   };
 
   const changeThemeColor = (color: string, save = true) => {
-    const colors = {
-      indigo: { primary: "#4f46e5", bg: "#a5b4fc" },
-      pink: { primary: "#ec4899", bg: "#f9a8d4" },
-      teal: { primary: "#0d9488", bg: "#5eead4" },
-      yellow: { primary: "#ca8a04", bg: "#fcd34d" },
-    };
+    const colors: any = { indigo: { p: "#4f46e5", b: "#a5b4fc" }, pink: { p: "#ec4899", b: "#f9a8d4" }, teal: { p: "#0d9488", b: "#5eead4" }, yellow: { p: "#ca8a04", b: "#fcd34d" } };
     let p, b;
     if (color.startsWith("#")) {
-      p = color;
-      try { const rgb = hexToRgb(color); b = `rgba(${rgb}, 0.4)`; } catch (e) { b = "#e0e7ff"; }
+      p = color; try { const rgb = hexToRgb(color); b = `rgba(${rgb}, 0.4)`; } catch (e) { b = "#e0e7ff"; }
     } else {
-      const key = color as keyof typeof colors;
-      if (colors[key]) { p = colors[key].primary; b = colors[key].bg; } 
-      else { p = '#4f46e5'; b = '#a5b4fc'; }
+      const key = color; if (colors[key]) { p = colors[key].p; b = colors[key].b; } else { p = '#4f46e5'; b = '#a5b4fc'; }
     }
     document.documentElement.style.setProperty("--theme-color-primary", p);
     document.documentElement.style.setProperty("--theme-color-bg", b);
     document.documentElement.style.setProperty("--theme-rgb", hexToRgb(p));
-    if (save && currentUser) {
-      smartSave({ theme: color });
-    }
+    if (save) saveTheme(color);
     if (!color.startsWith("#")) setConfigDropdownOpen(false);
   };
 
@@ -703,10 +467,10 @@ function App() {
             <button type="button" onClick={() => setIsSignup(false)} className={`px-4 py-2 rounded-xl font-bold ${!isSignup ? 'bg-white text-indigo-700' : 'bg-white/30 text-white'}`}>Iniciar sesión</button>
             <button type="button" onClick={() => setIsSignup(true)} className={`px-4 py-2 rounded-xl font-bold ${isSignup ? 'bg-white text-indigo-700' : 'bg-white/30 text-white'}`}>Crear cuenta</button>
           </div>
-          {loginErrorMessage && (
+          {loginError && (
             <div role="alert" aria-live="assertive" className="mb-3 flex items-start gap-3 bg-white/30 border border-red-400 text-red-800 px-3 py-2 rounded-lg">
               <AlertTriangle className="text-red-700 mt-0.5" />
-              <div className="text-sm font-bold">{loginErrorMessage}</div>
+              <div className="text-sm font-bold">{loginError}</div>
             </div>
           )}
           <form onSubmit={isSignup ? handleSignup : handleLogin} className="space-y-4">
@@ -714,25 +478,24 @@ function App() {
             <input autoFocus type="email" placeholder="tu@correo.com" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-white/90 border-0 text-gray-800 font-medium placeholder-gray-400 focus:ring-4 focus:ring-indigo-400/50 transition outline-none shadow-inner" />
             <label className="text-xs text-indigo-100 font-medium text-left block">Contraseña</label>
             <input type="password" placeholder="Contraseña (mín. 6 caracteres)" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-white/90 border-0 text-gray-800 font-medium placeholder-gray-400 focus:ring-4 focus:ring-indigo-400/50 transition outline-none shadow-inner" />
-            {password && password.length > 0 && password.length < 6 && (
-              <p className="text-xs text-red-300 text-left">La contraseña debe tener al menos 6 caracteres.</p>
-            )}
             <div className="flex gap-2">
               <button type="submit" disabled={authLoading || !email.trim() || !password} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg transition">
                 {authLoading ? (isSignup ? 'Creando...' : 'Ingresando...') : (isSignup ? 'Crear cuenta' : 'Entrar')}
               </button>
-              <button type="button" onClick={() => { setIsSignup(s => !s); setLoginErrorMessage(''); }} className="flex-1 py-3 bg-white/60 text-indigo-700 font-bold rounded-xl border border-white/40">{isSignup ? 'Ya tengo cuenta' : 'Crear cuenta'}</button>
+              <button type="button" onClick={() => { setIsSignup(s => !s); setLoginError(''); }} className="flex-1 py-3 bg-white/60 text-indigo-700 font-bold rounded-xl border border-white/40">{isSignup ? 'Ya tengo cuenta' : 'Crear cuenta'}</button>
             </div>
-            {signupPrompt && (
-              <div className="mt-3 text-sm text-center">
-                <p className="text-red-600 mb-2">{signupPromptMessage}</p>
-                <div className="flex gap-2 justify-center">
-                  <button type="button" onClick={createAccount} className="px-4 py-2 bg-green-600 text-white rounded-xl">Crear cuenta</button>
-                  <button type="button" onClick={() => setSignupPrompt(false)} className="px-4 py-2 bg-gray-200 rounded-xl">Cancelar</button>
-                </div>
-              </div>
-            )}
           </form>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isDataLoaded) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-indigo-50">
+        <div className="flex flex-col items-center gap-4 animate-pulse">
+          <Loader2 className="animate-spin text-indigo-600" size={48} />
+          <p className="text-indigo-800 font-bold text-lg">Cargando tu parcela...</p>
         </div>
       </div>
     );
@@ -753,13 +516,7 @@ function App() {
         .parcela-object:active { cursor: grabbing; transform: translate(-50%, -50%) scale(0.95); }
       `}</style>
 
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        onChange={handleFileChange} 
-        accept="image/png, image/jpeg, image/webp" 
-        className="hidden" 
-      />
+      <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/png, image/jpeg, image/webp" className="hidden" />
 
       {isSaving && (
         <div className="fixed top-4 right-4 z-[100] bg-black/80 backdrop-blur-md text-white px-4 py-2 rounded-full shadow-2xl border border-white/20 flex items-center gap-3 animate-pulse">
@@ -790,7 +547,6 @@ function App() {
         </div>
       )}
 
-      {/* MODALS */}
       {isAddTaskModalOpen && (
         <div className="fixed inset-0 bg-black/20 backdrop-blur-md z-[60] flex items-center justify-center p-4">
           <div className="w-full max-w-md liquid-glass p-8 pop-in shadow-2xl border border-white/60">
@@ -816,7 +572,7 @@ function App() {
         </div>
       )}
 
-      {usernameModalOpen && (
+      {showUsernameModal && (
         <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
           <div className="w-full max-w-md liquid-glass p-6 pop-in shadow-2xl border border-white/60" onClick={e => e.stopPropagation()}>
             <h3 className="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2"><User className="text-indigo-600" /> Elige un nombre de usuario</h3>
@@ -833,7 +589,6 @@ function App() {
         </div>
       )}
 
-      {/* DRAWERS & MENUS */}
       <aside className={`fixed inset-y-0 left-0 w-80 liquid-glass z-[50] p-6 m-4 transition-transform duration-500 ${storeDrawerOpen ? "translate-x-0" : "-translate-x-[150%]"}`}>
         <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ShoppingCart className="text-indigo-600" /> Tienda</h3><button onClick={toggleStoreDrawer} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20} /></button></div>
         <div className="p-5 rounded-2xl bg-gradient-to-br from-yellow-100/80 to-orange-100/80 border border-white/50 mb-6 shadow-sm backdrop-blur-sm"><p className="text-xs font-bold text-yellow-800 uppercase tracking-wide mb-1">Tu Saldo</p><p className="text-4xl font-black text-yellow-600 flex items-center gap-1 tracking-tighter">{coins}<DollarSign size={28} /></p></div>
@@ -850,7 +605,11 @@ function App() {
 
         <div className="space-y-3 overflow-y-auto flex-1 pr-1 min-h-0">
           {tasks.filter(t => !t.archived).map((task) => (
-            <div key={task.id} className={`relative p-4 rounded-2xl border transition-all ${task.completed ? "bg-green-50/60 border-green-200/60 opacity-90" : task.inProgress ? "bg-slate-800 border-slate-600 text-white shadow-xl scale-[1.02]" : "liquid-glass-panel"}`}>
+            <div 
+              key={task.id} 
+              onClick={() => handleTaskCardClick(task)} // <--- AQUI SE DETECTAN LOS 5 CLICKS
+              className={`relative p-4 rounded-2xl border transition-all select-none cursor-pointer active:scale-[0.98] ${task.completed ? "bg-green-50/60 border-green-200/60 opacity-90" : task.inProgress ? "bg-slate-800 border-slate-600 text-white shadow-xl scale-[1.02]" : "liquid-glass-panel"}`}
+            >
               <div className="flex justify-between items-start mb-3">
                 <div className="w-full flex items-start justify-between gap-3">
                   <div className="flex-1">
@@ -861,18 +620,17 @@ function App() {
                     )}
                   </div>
                   {task.completed && task.proofImage && (
-                    <div className="relative group cursor-pointer shrink-0" onClick={() => setPreviewImageSrc(task.proofImage ?? null)}>
+                    <div className="relative group cursor-pointer shrink-0" onClick={(e) => { e.stopPropagation(); setPreviewImageSrc(task.proofImage ?? null); }}>
                       <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-xl overflow-hidden border-4 border-green-200/50 shadow-sm transition-transform group-hover:scale-105"><img src={task.proofImage} alt="Proof" className="w-full h-full object-cover" /></div>
                     </div>
                   )}
                   {task.inProgress && !task.completed && <div className="animate-pulse bg-white/20 text-white p-1.5 rounded-lg shrink-0"><Zap size={14} /></div>}
                 </div>
               </div>
-              <div className="flex gap-2 mt-2">
+              <div className="flex gap-2 mt-2" onClick={(e) => e.stopPropagation()}>
                 {!task.completed ? (
                   <>
                     <button onClick={() => handleStartTask(task.id)} disabled={task.inProgress || isAnimating} className={`flex-1 py-2 border text-xs font-bold rounded-lg transition disabled:opacity-50 ${task.inProgress ? "bg-gray-700 border-gray-600 text-gray-400 cursor-not-allowed" : "bg-white/60 border-white text-gray-700 hover:bg-blue-50 hover:text-blue-700"}`}>{task.inProgress ? "En curso..." : "Iniciar"}</button>
-                    {/* BOTÓN REPARADO */}
                     <button onClick={() => triggerFileUpload(task.id)} disabled={!task.inProgress} className={`flex-1 py-2 text-xs font-bold rounded-lg shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2 ${task.inProgress ? "bg-white text-gray-900 hover:bg-gray-200" : "bg-gray-300 text-gray-500 cursor-not-allowed"}`}><Upload size={14} /> ¡Hecho!</button>
                   </>
                 ) : (<div className="w-full py-1.5 text-center text-xs font-bold text-green-700 bg-green-100/50 border border-green-200 rounded-lg">¡Completada!</div>)}
