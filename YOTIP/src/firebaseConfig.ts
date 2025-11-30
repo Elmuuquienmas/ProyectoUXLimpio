@@ -1,18 +1,19 @@
+// src/firebaseConfig.ts
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
 
-// Preferir variables de entorno Vite; si no están definidas, usar la configuración embebida
+// DATOS DUROS (HARDCODED) - SI ESTO NO FUNCIONA, ES CULPA DE GOOGLE
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: "AIzaSyCp6KbX3t56efANf7_w9pJOKwAaOxroKFo",
+  authDomain: "yourtime-proyecto-escuela.firebaseapp.com",
+  projectId: "yourtime-proyecto-escuela",
+  storageBucket: "yourtime-proyecto-escuela.firebasestorage.app",
+  messagingSenderId: "666837926457",
+  appId: "1:666837926457:web:617ebfbaa7dd46b20a83e8"
 };
 
 // Inicializar Firebase
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
 export const auth = getAuth(app);
+export const db = getFirestore(app);
