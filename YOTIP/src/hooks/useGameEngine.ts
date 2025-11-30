@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react';
-// Ruta para salir de 'hooks' y buscar en 'src'
 import { getUserData, saveUserData } from './supabaseUtils'; 
 import type { Task, ParcelaObject, StoreItem } from '../types';
 
@@ -7,6 +6,12 @@ const DEFAULT_TASKS: Task[] = [
   { id: 1, name: "Leer 1 artículo", reward: 10, completed: false, inProgress: false, deadline: null, archived: false },
   { id: 2, name: "Organizar correo", reward: 25, completed: false, inProgress: false, deadline: null, archived: false },
   { id: 3, name: "Ejercicio 30 min", reward: 50, completed: false, inProgress: false, deadline: null, archived: false },
+];
+
+const POSSIBLE_TASKS = [
+  { name: "Tomar un vaso de agua", reward: 5 }, { name: "Estirar 5 minutos", reward: 10 }, { name: "Limpiar el escritorio", reward: 20 },
+  { name: "Leer 10 páginas", reward: 30 }, { name: "Meditar 5 minutos", reward: 15 }, { name: "Responder 3 emails", reward: 25 },
+  { name: "Hacer la cama", reward: 15 }, { name: "Caminar 10 minutos", reward: 20 }, { name: "Dibujar algo rápido", reward: 10 }
 ];
 
 export function useGameEngine(currentUser: string | null) {
@@ -25,46 +30,51 @@ export function useGameEngine(currentUser: string | null) {
 
   // 1. LIMPIEZA
   useEffect(() => {
-    setCoins(0);
-    setParcelaObjects([]);
-    setTasks([]);
-    setUsername(null);
-    setIsDataLoaded(false);
+    setCoins(0); setParcelaObjects([]); setTasks([]); setUsername(null); setIsDataLoaded(false);
   }, [currentUser]);
 
-  // 2. CARGA DE DATOS
+  // 2. CARGA DE DATOS (CON RECUPERACIÓN DE RESPALDO)
   useEffect(() => {
     let mounted = true;
     if (!currentUser) return;
 
     async function load() {
       try {
-        const data = await getUserData(currentUser!);
+        // A) Primero buscamos si hay un "Respaldo de Emergencia" local pendiente
+        const localBackup = localStorage.getItem(`unsaved_${currentUser}`);
+        let finalData: any = null;
+
+        if (localBackup) {
+          console.warn("⚠️ ¡Respaldo local encontrado! Usando datos no subidos...");
+          finalData = JSON.parse(localBackup);
+        } else {
+          // B) Si no hay respaldo, bajamos de la nube
+          finalData = await getUserData(currentUser!);
+        }
+
         if (!mounted) return;
 
-        if (data) {
-          setCoins(data.coins ?? 0);
-          setParcelaObjects(data.objects || []);
-          const dbTasks = data.tasks; 
+        if (finalData) {
+          // --- CARGAMOS DATOS ---
+          setCoins(finalData.coins ?? 0);
+          setParcelaObjects(finalData.objects || []);
+          const dbTasks = finalData.tasks; 
           setTasks((dbTasks && dbTasks.length > 0) ? dbTasks : DEFAULT_TASKS);
-          setUsername(data.username || null);
-          setTheme(data.theme || 'indigo');
-          if (!data.username) setShowUsernameModal(true);
+          setUsername(finalData.username || null);
+          setTheme(finalData.theme || 'indigo');
+          if (!finalData.username) setShowUsernameModal(true);
           
           setIsDataLoaded(true); 
-        } else {
-          // USUARIO NUEVO
-          setTasks(DEFAULT_TASKS);
-          setCoins(0);
-          setParcelaObjects([]);
-          setShowUsernameModal(true);
-          setIsDataLoaded(true); 
 
-          saveUserData(currentUser!, { 
-            coins: 0, 
-            objects: [], 
-            tasks: DEFAULT_TASKS 
-          }).catch(err => console.error("Error guardando fondo:", err));
+          // Si usamos el backup local, intentamos subirlo a la nube ahora mismo
+          if (localBackup) {
+             smartSave(finalData);
+          }
+
+        } else {
+          // --- USUARIO NUEVO ---
+          setTasks(DEFAULT_TASKS); setCoins(0); setParcelaObjects([]); setShowUsernameModal(true); setIsDataLoaded(true); 
+          saveUserData(currentUser!, { coins: 0, objects: [], tasks: DEFAULT_TASKS }).catch(console.error);
         }
       } catch (e) {
         console.error("Error cargando:", e);
@@ -75,17 +85,40 @@ export function useGameEngine(currentUser: string | null) {
     return () => { mounted = false; };
   }, [currentUser]);
 
-  // 3. GUARDADO INTELIGENTE
-  const smartSave = async (data: any) => {
+  // 3. GUARDADO BLINDADO (LA TÉCNICA QUE PEDISTE) 🛡️
+  const smartSave = async (partialData: any) => {
     if (!currentUser || !isDataLoaded) return;
     setIsSaving(true);
-    try { await saveUserData(currentUser, data); }
-    catch (e) { console.error(e); }
-    finally { setTimeout(() => setIsSaving(false), 500); }
+
+    // 1. Preparamos el PAQUETE COMPLETO
+    const fullData = {
+      coins: partialData.coins !== undefined ? partialData.coins : coins,
+      objects: partialData.objects !== undefined ? partialData.objects : parcelaObjects,
+      tasks: partialData.tasks !== undefined ? partialData.tasks : tasks,
+      ...(partialData.username && { username: partialData.username }),
+      ...(partialData.theme && { theme: partialData.theme }),
+    };
+
+    try {
+      // 2. GUARDA LOCALMENTE PRIMERO (Seguro de vida)
+      localStorage.setItem(`unsaved_${currentUser}`, JSON.stringify(fullData));
+
+      // 3. INTENTA SUBIR A LA NUBE
+      await saveUserData(currentUser, fullData);
+
+      // 4. ÉXITO: BORRA EL RESPALDO LOCAL (Como pediste)
+      localStorage.removeItem(`unsaved_${currentUser}`);
+      console.log("✅ Datos sincronizados, respaldo local borrado.");
+
+    } catch (e) { 
+      console.error("❌ Falló la subida, pero el respaldo local está seguro.", e);
+      // No borramos el localStorage, así la próxima vez que entre, se recupera.
+    } finally { 
+      setTimeout(() => setIsSaving(false), 500); 
+    }
   };
 
   // --- ACCIONES ---
-
   const buyItem = (item: StoreItem) => {
     if (coins < item.cost) return false;
     const newCoins = coins - item.cost;
@@ -116,23 +149,32 @@ export function useGameEngine(currentUser: string | null) {
     smartSave({ tasks: newTasks });
   };
 
-  const updateTaskStatus = (taskId: number, inProgress: boolean) => {
-    const newTasks = tasks.map(t => t.id === taskId ? { ...t, inProgress } : t);
+  const editTask = (updatedTask: Task) => {
+    const newTasks = tasks.map(t => t.id === updatedTask.id ? updatedTask : t);
     setTasks(newTasks);
     smartSave({ tasks: newTasks });
   };
 
-  // --- FUNCIÓN NUEVA: CAMBIAR TAREA ACTIVA (SWAP) ---
+  const rerollTask = (taskId: number) => {
+    const randomTemplate = POSSIBLE_TASKS[Math.floor(Math.random() * POSSIBLE_TASKS.length)];
+    const newTasks = tasks.map(t => t.id === taskId ? { ...t, name: randomTemplate.name, reward: randomTemplate.reward } : t);
+    setTasks(newTasks);
+    smartSave({ tasks: newTasks });
+    return randomTemplate.name;
+  };
+
   const switchActiveTask = (newTaskId: number) => {
     const newTasks = tasks.map(t => {
-      // 1. Si es la nueva tarea -> La encendemos
       if (t.id === newTaskId) return { ...t, inProgress: true, archived: false };
-      // 2. Si es cualquier otra tarea que estaba activa -> La apagamos
       if (t.inProgress) return { ...t, inProgress: false };
-      // 3. El resto sigue igual
       return t;
     });
-    
+    setTasks(newTasks);
+    smartSave({ tasks: newTasks });
+  };
+
+  const updateTaskStatus = (taskId: number, inProgress: boolean) => {
+    const newTasks = tasks.map(t => t.id === taskId ? { ...t, inProgress } : t);
     setTasks(newTasks);
     smartSave({ tasks: newTasks });
   };
@@ -144,7 +186,6 @@ export function useGameEngine(currentUser: string | null) {
   };
 
   const saveTheme = (newTheme: string) => { setTheme(newTheme); smartSave({ theme: newTheme }); };
-
   const saveUsername = (name: string) => { setUsername(name); setShowUsernameModal(false); smartSave({ username: name }); };
 
   return {
@@ -152,7 +193,6 @@ export function useGameEngine(currentUser: string | null) {
     isDataLoaded, isSaving, showUsernameModal, setShowUsernameModal,
     saveUsername, saveTheme, buyItem, 
     setParcelaObjects, objectsRef, smartSave, updateObjectsVisual,
-    completeTask, saveNewTask, updateTaskStatus, switchActiveTask, // <--- ¡AQUÍ ESTÁ!
-    resetTasks
+    completeTask, saveNewTask, editTask, rerollTask, switchActiveTask, updateTaskStatus, resetTasks
   };
 }
