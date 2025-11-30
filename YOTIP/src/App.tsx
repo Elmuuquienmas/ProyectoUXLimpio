@@ -57,7 +57,6 @@ function hexToRgb(hex: string): string {
   return `${r}, ${g}, ${b}`;
 }
 
-// --- COMPRESIÓN (Sin cambios, funciona bien) ---
 const compressImage = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -91,7 +90,6 @@ const compressImage = (file: File): Promise<string> => {
         const ctx = canvas.getContext('2d');
         if (!ctx) return reject(new Error('Cannot get canvas context'));
         ctx.drawImage(img, 0, 0, width, height);
-        // Calidad 0.6 para base de datos ligera
         resolve(canvas.toDataURL('image/jpeg', 0.6));
       };
       img.onerror = (error) => reject(error);
@@ -151,9 +149,7 @@ function App() {
   const [usernameError, setUsernameError] = useState("");
   const [usernameChecking, setUsernameChecking] = useState(false);
 
-  // INDICADOR DE GUARDADO
   const [isSaving, setIsSaving] = useState(false);
-
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   useEffect(() => {
@@ -177,7 +173,6 @@ function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const lastTouchRef = useRef<{ distance: number | null; x: number; y: number }>({ distance: null, x: 0, y: 0 });
 
-  // INPUT REF
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [taskToCompleteId, setTaskToCompleteId] = useState<number | null>(null);
   const [isResetConfirming, setIsResetConfirming] = useState(false);
@@ -208,7 +203,6 @@ function App() {
     return () => unsub && unsub();
   }, []);
 
-  // SMART SAVE
   const smartSave = async (dataToSave: any) => {
       if (!currentUser) return;
       setIsSaving(true);
@@ -224,6 +218,7 @@ function App() {
   const objectsSaveRef = useRef<number | null>(null);
   const tasksSaveRef = useRef<number | null>(null);
 
+  // --- CARGA DE DATOS CORREGIDA (Lógica de Rescate) ---
   useEffect(() => {
     let mounted = true;
     async function loadUserData() {
@@ -234,18 +229,25 @@ function App() {
         if (!mounted) return;
 
         if (data) {
+          // 1. Datos de Firebase
           let loadedObjects = Array.isArray(data.objects) ? data.objects : [];
-          if (loadedObjects.length === 0) {
-              const localBackup = localStorage.getItem(`${currentUser}_objects`);
-              if (localBackup) {
-                  try {
-                      const parsedBackup = JSON.parse(localBackup);
-                      if (Array.isArray(parsedBackup) && parsedBackup.length > 0) {
-                          loadedObjects = parsedBackup;
-                          smartSave({ objects: loadedObjects });
+          
+          // 2. Verificar LocalStorage
+          const localBackupStr = localStorage.getItem(`${currentUser}_objects`);
+          if (localBackupStr) {
+              try {
+                  const localBackup = JSON.parse(localBackupStr);
+                  if (Array.isArray(localBackup)) {
+                      // --- CORRECCIÓN CRÍTICA ---
+                      // Si el backup local tiene MÁS objetos que Firebase, confiamos en el local.
+                      // Esto arregla el problema de que el F5 borre objetos no guardados.
+                      if (localBackup.length > loadedObjects.length) {
+                          console.warn("⚠️ Recuperando datos locales (son más recientes)...");
+                          loadedObjects = localBackup;
+                          smartSave({ objects: loadedObjects }); // Actualizamos la nube
                       }
-                  } catch(e) {}
-              }
+                  }
+              } catch(e) {}
           }
 
           setCoins(typeof data.coins === 'number' ? data.coins : 0);
@@ -258,6 +260,7 @@ function App() {
           changeThemeColor(data.theme || 'indigo', false);
           
         } else {
+          // Usuario Nuevo o sin datos en nube
           const localCoins = parseInt(localStorage.getItem(`${currentUser}_coins`) || '0');
           let localObjects: ParcelaObject[] = [];
           try { localObjects = JSON.parse(localStorage.getItem(`${currentUser}_objects`) || '[]'); } catch(e) {}
@@ -464,21 +467,11 @@ function App() {
       smartSave({ tasks: newTasks });
   };
 
-  // --- SOLUCIÓN DEL BOTÓN HECHO ---
   const triggerFileUpload = (taskId: number) => {
-      console.log("Triggering upload for task:", taskId);
-      
-      // Eliminamos el bloqueo de animación para asegurar que abra
       setTaskToCompleteId(taskId);
-      
-      // Verificación robusta del input
       if (fileInputRef.current) {
-          // Limpiamos el valor para permitir re-seleccionar el mismo archivo
           fileInputRef.current.value = '';
           fileInputRef.current.click();
-      } else {
-          console.error("Input ref not found!");
-          showToast("Error interno: Input no encontrado", "error");
       }
   };
 
@@ -760,7 +753,6 @@ function App() {
         .parcela-object:active { cursor: grabbing; transform: translate(-50%, -50%) scale(0.95); }
       `}</style>
 
-      {/* --- INPUT MOVIDO AL TOP, Y VISIBLE PARA DEBUGGING (Hidden via class, not display:none) --- */}
       <input 
         type="file" 
         ref={fileInputRef} 
