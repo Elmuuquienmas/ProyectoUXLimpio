@@ -1,29 +1,36 @@
-import { doc, getDoc, setDoc, runTransaction, serverTimestamp, collection, query, where, getDocs, updateDoc, arrayUnion } from "firebase/firestore";
-import { db, auth } from "./firebaseConfig";
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut as firebaseSignOut, onAuthStateChanged as firebaseOnAuthStateChanged } from 'firebase/auth';
+// src/firebaseUtils.ts
 
-// --- TUS FUNCIONES EXISTENTES (MANTENLAS IGUAL) ---
+// URL de tu json-server (asegúrate de correrlo en el puerto 3001)
+const API_URL = "http://localhost:3001";
+
+// --- UTILIDADES DE AYUDA ---
+
+// Función para simular un ID único (ya que no tenemos Firebase Auth)
+const generateId = () => 'user_' + Date.now() + Math.random().toString(36).substr(2, 9);
+
+// --- FUNCIONES DE BASE DE DATOS ---
 
 export async function saveUserData(userId: string, data: any) {
   try {
-    await setDoc(doc(db, "users", userId), data, { merge: true });
-    console.log("Datos guardados correctamente en Firestore");
+    // En json-server, usamos PATCH para actualizar solo los campos enviados
+    await fetch(`${API_URL}/users/${userId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    console.log("Datos guardados localmente");
   } catch (error) {
-    console.error("Error al guardar datos en Firestore:", error);
+    console.error("Error al guardar datos:", error);
   }
 }
 
 export async function getUserData(userId: string) {
   try {
-    const docRef = doc(db, "users", userId);
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
-      return docSnap.data();
-    } else {
-      return null;
-    }
+    const response = await fetch(`${API_URL}/users/${userId}`);
+    if (!response.ok) return null;
+    return await response.json();
   } catch (error) {
-    console.error("Error al leer datos de Firestore:", error);
+    console.error("Error al leer datos:", error);
     return null;
   }
 }
@@ -31,9 +38,10 @@ export async function getUserData(userId: string) {
 export async function isUsernameAvailable(username: string) {
   try {
     const normalized = username.trim().toLowerCase();
-    const docRef = doc(db, 'usernames', normalized);
-    const snap = await getDoc(docRef);
-    return !snap.exists();
+    // Buscamos si alguien ya tiene este username
+    const response = await fetch(`${API_URL}/users?username=${normalized}`);
+    const users = await response.json();
+    return users.length === 0;
   } catch (error) {
     console.error('Error comprobando username:', error);
     return false;
@@ -42,115 +50,176 @@ export async function isUsernameAvailable(username: string) {
 
 export async function registerUsername(username: string, uid: string) {
   const normalized = username.trim().toLowerCase();
-  const usernameRef = doc(db, 'usernames', normalized);
-  const userRef = doc(db, 'users', uid);
+  
+  // 1. Verificar disponibilidad de nuevo
+  const available = await isUsernameAvailable(normalized);
+  if (!available) throw new Error('username-taken');
+
+  // 2. Guardar en el usuario
   try {
-    await runTransaction(db, async (tx) => {
-      const userSnap = await tx.get(userRef);
-      if (userSnap.exists() && userSnap.data() && (userSnap.data() as any).username) {
-        throw new Error('user-already-has-username');
-      }
-      const nameSnap = await tx.get(usernameRef);
-      if (nameSnap.exists()) {
-        throw new Error('username-taken');
-      }
-      tx.set(usernameRef, { uid, createdAt: serverTimestamp() });
-      tx.set(userRef, { username: normalized }, { merge: true });
+    await fetch(`${API_URL}/users/${uid}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: normalized })
     });
     return { success: true };
   } catch (err) {
-    if ((err as any)?.code === 'permission-denied') {
-      throw new Error('permission-denied');
-    }
     throw err;
   }
 }
 
+// --- FUNCIONES DE AUTH SIMULADA ---
+
 export async function signUpWithEmail(email: string, password: string) {
-  return createUserWithEmailAndPassword(auth, email, password);
+  // 1. Verificar si el email ya existe
+  const checkRes = await fetch(`${API_URL}/users?email=${email}`);
+  const existingUsers = await checkRes.json();
+  
+  if (existingUsers.length > 0) {
+    throw new Error("El correo ya está registrado");
+  }
+
+  // 2. Crear usuario nuevo
+  const newUser = {
+    id: generateId(),
+    email: email,
+    password: password, // NOTA: En un proyecto real, nunca guardes contraseñas en texto plano
+    createdAt: Date.now(),
+    coins: 0,
+    objects: [],
+    tasks: []
+  };
+
+  const createRes = await fetch(`${API_URL}/users`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(newUser)
+  });
+
+  const user = await createRes.json();
+  
+  // Simular inicio de sesión guardando en localStorage
+  localStorage.setItem('local_auth_uid', user.id);
+  
+  return { user: { uid: user.id, email: user.email } };
 }
 
 export async function signInWithEmail(email: string, password: string) {
-  return signInWithEmailAndPassword(auth, email, password);
+  // Buscar usuario que coincida con email y password
+  const response = await fetch(`${API_URL}/users?email=${email}&password=${password}`);
+  const users = await response.json();
+
+  if (users.length === 0) {
+    throw new Error("Credenciales incorrectas");
+  }
+
+  const user = users[0];
+  localStorage.setItem('local_auth_uid', user.id);
+  
+  return { user: { uid: user.id, email: user.email } };
 }
 
 export async function signOutUser() {
-  return firebaseSignOut(auth);
+  localStorage.removeItem('local_auth_uid');
+  // Recargar página para limpiar estados es lo más fácil en este cambio
+  window.location.reload(); 
+  return true;
 }
 
+// Simulamos el listener de Firebase comprobando localStorage
 export function onAuthStateChanged(callback: (user: any) => void) {
-  return firebaseOnAuthStateChanged(auth, callback);
+  const storedUid = localStorage.getItem('local_auth_uid');
+  
+  if (storedUid) {
+    // Si hay ID guardado, obtenemos el usuario y ejecutamos el callback
+    getUserData(storedUid).then(userData => {
+      if (userData) {
+        callback({ uid: storedUid, email: userData.email });
+      } else {
+        localStorage.removeItem('local_auth_uid');
+        callback(null);
+      }
+    });
+  } else {
+    callback(null);
+  }
+
+  // Retornamos una función vacía para simular el unsubscribe
+  return () => {}; 
 }
 
-// --- NUEVAS FUNCIONES PARA EQUIPOS (AGREGAR AL FINAL) ---
+// --- FUNCIONES DE EQUIPOS (ADAPTADAS) ---
 
-// Crear equipo
 export async function createTeam(teamName: string, creatorUid: string) {
   const teamId = "team_" + Date.now();
-  const teamRef = doc(db, "teams", teamId);
-  const userRef = doc(db, "users", creatorUid);
+  
+  // 1. Crear el equipo
+  await fetch(`${API_URL}/teams`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: teamId,
+      name: teamName,
+      members: [creatorUid],
+      createdAt: Date.now()
+    })
+  });
 
-  try {
-    await runTransaction(db, async (tx) => {
-      tx.set(teamRef, {
-        name: teamName,
-        members: [creatorUid],
-        createdAt: serverTimestamp()
-      });
-      tx.update(userRef, { teamId: teamId });
-    });
-    return teamId;
-  } catch (error) {
-    console.error("Error creando equipo:", error);
-    throw error;
-  }
+  // 2. Actualizar al usuario
+  await fetch(`${API_URL}/users/${creatorUid}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ teamId: teamId })
+  });
+
+  return teamId;
 }
 
-// Buscar equipo por nombre exacto
 export async function findTeamByName(name: string) {
   try {
-    const teamsRef = collection(db, "teams");
-    const q = query(teamsRef, where("name", "==", name));
-    const querySnapshot = await getDocs(q);
-    if (querySnapshot.empty) return null;
-    const doc = querySnapshot.docs[0];
-    return { id: doc.id, ...doc.data() };
+    const response = await fetch(`${API_URL}/teams?name=${name}`);
+    const teams = await response.json();
+    return teams.length > 0 ? teams[0] : null;
   } catch (error) {
     console.error("Error buscando equipo:", error);
     return null;
   }
 }
 
-// Unirse a equipo
 export async function joinTeam(teamId: string, uid: string) {
-  const teamRef = doc(db, "teams", teamId);
-  const userRef = doc(db, "users", uid);
+  // 1. Obtener equipo actual para ver sus miembros
+  const teamRes = await fetch(`${API_URL}/teams/${teamId}`);
+  const team = await teamRes.json();
 
-  try {
-    await runTransaction(db, async (tx) => {
-      const teamDoc = await tx.get(teamRef);
-      if (!teamDoc.exists()) throw new Error("El equipo no existe");
-      tx.update(teamRef, { members: arrayUnion(uid) });
-      tx.update(userRef, { teamId: teamId });
-    });
-    return true;
-  } catch (error) {
-    console.error("Error uniéndose:", error);
-    throw error;
-  }
+  // 2. Agregar usuario al array de miembros (evitando duplicados)
+  const newMembers = [...new Set([...team.members, uid])];
+
+  await fetch(`${API_URL}/teams/${teamId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ members: newMembers })
+  });
+
+  // 3. Asignar teamId al usuario
+  await fetch(`${API_URL}/users/${uid}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ teamId: teamId })
+  });
+
+  return true;
 }
 
-// Obtener datos de la aldea (miembros)
 export async function getTeamVillageData(teamId: string) {
   try {
-    const usersRef = collection(db, "users");
-    const q = query(usersRef, where("teamId", "==", teamId));
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ 
-      uid: doc.id, 
-      username: doc.data().username || "Anonimo",
-      coins: doc.data().coins || 0,
-      // No traemos 'objects' pesados aquí para optimizar, solo info básica
+    // json-server permite filtrar usuarios por teamId directamente
+    const response = await fetch(`${API_URL}/users?teamId=${teamId}`);
+    const users = await response.json();
+    
+    return users.map((u: any) => ({
+      uid: u.id,
+      username: u.username || "Anonimo",
+      coins: u.coins || 0
     }));
   } catch (error) {
     console.error("Error cargando aldea:", error);
