@@ -1,7 +1,7 @@
 // src/firebaseUtils.ts
 
 // URL de tu json-server (asegúrate de correrlo en el puerto 3001)
-const API_URL = "http://localhost:3001";
+const API_URL = "/api";
 
 // --- UTILIDADES DE AYUDA ---
 
