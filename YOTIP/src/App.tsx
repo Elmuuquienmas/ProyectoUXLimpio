@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { getUserData, saveUserData, signInWithEmail, signUpWithEmail, signOutUser, onAuthStateChanged, registerUsername, isUsernameAvailable } from "./firebaseUtils";
+import type { Task, ParcelaObject, ViewTransform, StoreItem, Toast } from './types';
 import {
   ShoppingCart,
   ListTodo,
@@ -30,6 +32,7 @@ import {
   Upload,
   Image as ImageIcon,
   Maximize2,
+  Loader2,
 } from "lucide-react";
 
 // --- IMÁGENES ---
@@ -44,9 +47,9 @@ import gatoImg from './assets/gato.png';
 import casaImg from './assets/casa.png';
 
 // --- UTILIDADES ---
-function hexToRgb(hex) {
+function hexToRgb(hex: string): string {
   const cleanHex = hex.startsWith("#") ? hex.slice(1) : hex;
-  const expandedHex = cleanHex.length === 3 ? cleanHex.split("").map((char) => char + char).join("") : cleanHex;
+  const expandedHex = cleanHex.length === 3 ? cleanHex.split("").map((char: string) => char + char).join("") : cleanHex;
   const bigint = parseInt(expandedHex, 16);
   const r = (bigint >> 16) & 255;
   const g = (bigint >> 8) & 255;
@@ -54,19 +57,19 @@ function hexToRgb(hex) {
   return `${r}, ${g}, ${b}`;
 }
 
-// --- NUEVO: FUNCIÓN DE COMPRESIÓN DE IMÁGENES ---
-// Esto evita que la pantalla se ponga blanca por falta de memoria
-const compressImage = (file) => {
+const compressImage = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = (event) => {
+      const result = event.target?.result as string | null;
+      if (!result) return reject(new Error('No file data'));
       const img = new Image();
-      img.src = event.target.result;
+      img.src = result;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800; // Reducimos a un ancho máximo de 800px
-        const MAX_HEIGHT = 800;
+        const MAX_WIDTH = 600; 
+        const MAX_HEIGHT = 600;
         let width = img.width;
         let height = img.height;
 
@@ -85,11 +88,9 @@ const compressImage = (file) => {
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
+        if (!ctx) return reject(new Error('Cannot get canvas context'));
         ctx.drawImage(img, 0, 0, width, height);
-        
-        // Convertimos a JPEG con calidad 0.7 (70%)
-        // Esto reduce una foto de 10MB a unos 100KB
-        resolve(canvas.toDataURL('image/jpeg', 0.7));
+        resolve(canvas.toDataURL('image/jpeg', 0.6));
       };
       img.onerror = (error) => reject(error);
     };
@@ -97,21 +98,20 @@ const compressImage = (file) => {
   });
 };
 
-const DEFAULT_TASKS = [
-    { id: 1, name: "Leer 1 artículo", reward: 10, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
-    { id: 2, name: "Organizar correo", reward: 25, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
-    { id: 3, name: "Ejercicio 30 min", reward: 50, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
+const DEFAULT_TASKS: Task[] = [
+  { id: 1, name: "Leer 1 artículo", reward: 10, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
+  { id: 2, name: "Organizar correo", reward: 25, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
+  { id: 3, name: "Ejercicio 30 min", reward: 50, completed: false, inProgress: false, deadline: null, proofImage: null, archived: false },
 ];
 
-// Utilidades de Touch
-const getDistance = (touches) => {
+const getDistance = (touches: any): number => {
   return Math.hypot(
     touches[0].clientX - touches[1].clientX,
     touches[0].clientY - touches[1].clientY
   );
 };
 
-const getMidpoint = (touches) => {
+const getMidpoint = (touches: any) => {
   return {
     x: (touches[0].clientX + touches[1].clientX) / 2,
     y: (touches[0].clientY + touches[1].clientY) / 2,
@@ -119,13 +119,20 @@ const getMidpoint = (touches) => {
 };
 
 function App() {
-  const [currentUser, setCurrentUser] = useState(() => localStorage.getItem("activeUser") || null);
-  const [loginName, setLoginName] = useState("");
+  const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSignup, setIsSignup] = useState(false);
+  const [signupPrompt, setSignupPrompt] = useState(false);
+  const [signupPromptMessage, setSignupPromptMessage] = useState("");
+  const [loginErrorMessage, setLoginErrorMessage] = useState<string>("");
   const [isDataLoaded, setIsDataLoaded] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
 
-  const [coins, setCoins] = useState(5000);
-  const [parcelaObjects, setParcelaObjects] = useState([]);
-  const [tasks, setTasks] = useState([]);
+  const [coins, setCoins] = useState<number>(0);
+  const [parcelaObjects, setParcelaObjects] = useState<ParcelaObject[]>([]);
+  const objectsRef = useRef<ParcelaObject[]>(parcelaObjects);
+  const [tasks, setTasks] = useState<Task[]>([]);
 
   // UI States
   const [storeDrawerOpen, setStoreDrawerOpen] = useState(false);
@@ -136,7 +143,13 @@ function App() {
   const [isBannerExpanded, setIsBannerExpanded] = useState(false);
   const [isAddTaskModalOpen, setIsAddTaskModalOpen] = useState(false);
   
-  // DETECCIÓN DE MÓVIL
+  const [username, setUsername] = useState<string | null>(null);
+  const [usernameModalOpen, setUsernameModalOpen] = useState(false);
+  const [desiredUsername, setDesiredUsername] = useState("");
+  const [usernameError, setUsernameError] = useState("");
+  const [usernameChecking, setUsernameChecking] = useState(false);
+
+  const [isSaving, setIsSaving] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   useEffect(() => {
@@ -145,403 +158,478 @@ function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const [previewImageSrc, setPreviewImageSrc] = useState(null);
+  const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
   const [animationState, setAnimationState] = useState("idle");
   const [lumberjackFrame, setLumberjackFrame] = useState(0);
-  const [activeTaskId, setActiveTaskId] = useState(null);
-  
-  // --- LÓGICA DE ARRASTRE ---
-  const [isDragging, setIsDragging] = useState(false);
-  const [draggedObjectId, setDraggedObjectId] = useState(null);
-  const dragOffset = useRef({ x: 0, y: 0 });
-  const parcelaRef = useRef(null);
-  
-  // --- LÓGICA PAN Y ZOOM (SOLO MÓVIL) ---
-  const [viewTransform, setViewTransform] = useState({ x: -400, y: -200, scale: 1 });
-  const containerRef = useRef(null);
-  const lastTouchRef = useRef({ distance: null, x: 0, y: 0 });
+  const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
 
-  const fileInputRef = useRef(null);
-  const [taskToCompleteId, setTaskToCompleteId] = useState(null);
+  // Drag & Zoom
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [draggedObjectId, setDraggedObjectId] = useState<string | number | null>(null);
+  const dragOffset = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const parcelaRef = useRef<HTMLDivElement | null>(null);
+  const [viewTransform, setViewTransform] = useState<ViewTransform>({ x: -400, y: -200, scale: 1 });
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const lastTouchRef = useRef<{ distance: number | null; x: number; y: number }>({ distance: null, x: 0, y: 0 });
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [taskToCompleteId, setTaskToCompleteId] = useState<number | null>(null);
   const [isResetConfirming, setIsResetConfirming] = useState(false);
-  const resetTimeoutRef = useRef(null);
-  
-  const [toast, setToast] = useState({ message: "", visible: false, type: "success" });
+  const resetTimeoutRef = useRef<number | null>(null);
+
+  const [toast, setToast] = useState<Toast>({ message: "", visible: false, type: "success" });
 
   const isAnyMenuOpen = storeDrawerOpen || activitiesDrawerOpen || tycoonPanelOpen || isContactOpen || isAddTaskModalOpen;
 
-  const showToast = useCallback((message, type = "success") => {
+  const showToast = useCallback((message: string, type: /*ToastType*/ any = "success") => {
     setToast({ message, visible: true, type });
     setTimeout(() => setToast((prev) => ({ ...prev, visible: false })), 4000);
   }, []);
 
   useEffect(() => {
-      if (currentUser) {
-          const savedCoins = localStorage.getItem(`${currentUser}_coins`);
-          setCoins(savedCoins ? parseInt(savedCoins) : 5000);
+    objectsRef.current = parcelaObjects;
+  }, [parcelaObjects]);
 
-          const savedObjs = localStorage.getItem(`${currentUser}_objects`);
-          try { 
-              const parsed = JSON.parse(savedObjs);
-              setParcelaObjects(Array.isArray(parsed) ? parsed : []);
-          } catch(e) { setParcelaObjects([]); }
-
-          const savedTasks = localStorage.getItem(`${currentUser}_tasks`);
-          let loadedTasks = [];
-          try { 
-              const parsedTasks = JSON.parse(savedTasks);
-              loadedTasks = parsedTasks || [];
-              loadedTasks = loadedTasks.map(t => ({ ...t, archived: t.archived || false }));
-              setTasks(loadedTasks);
-          } catch(e) { 
-              loadedTasks = DEFAULT_TASKS;
-              setTasks(loadedTasks); 
-          }
-
-          const activeTask = loadedTasks.find(t => t.inProgress && !t.archived);
-          if (activeTask) {
-              setActiveTaskId(activeTask.id);
-              setAnimationState("chopping");
-          } else {
-              setActiveTaskId(null);
-              setAnimationState("idle");
-          }
-
-          const savedTheme = localStorage.getItem(`${currentUser}_theme`);
-          changeThemeColor(savedTheme || "indigo", false);
-
-          setIsDataLoaded(true);
+  useEffect(() => {
+    const unsub = onAuthStateChanged((user) => {
+      if (user) {
+        setCurrentUser(user.uid);
       } else {
-          setIsDataLoaded(false);
+        setCurrentUser(null);
       }
-  }, [currentUser]);
-
-  // --- GUARDADO PROTEGIDO (TRY/CATCH) ---
-  useEffect(() => { 
-      if (currentUser && isDataLoaded) {
-          try { localStorage.setItem(`${currentUser}_coins`, coins.toString()); } catch(e) { console.error("Error saving coins", e); }
-      }
-  }, [coins, currentUser, isDataLoaded]);
-
-  useEffect(() => { 
-      if (currentUser && isDataLoaded) {
-          try { localStorage.setItem(`${currentUser}_objects`, JSON.stringify(parcelaObjects)); } catch(e) { console.error("Error saving objects", e); }
-      }
-  }, [parcelaObjects, currentUser, isDataLoaded]);
-
-  useEffect(() => { 
-      if (currentUser && isDataLoaded) {
-          try { 
-            localStorage.setItem(`${currentUser}_tasks`, JSON.stringify(tasks)); 
-          } catch(e) { 
-            console.error("Error saving tasks (Storage Full?)", e); 
-            showToast("¡Almacenamiento lleno! Borra tareas antiguas.", "error");
-          }
-      }
-  }, [tasks, currentUser, isDataLoaded, showToast]);
-
-  const handleLogin = (e) => {
-      e.preventDefault();
-      const name = loginName.trim();
-      if (name) {
-          localStorage.setItem("activeUser", name);
-          setCurrentUser(name);
-      }
-  };
-
-  const handleLogout = () => {
-      if(confirm("¿Cerrar sesión?")) {
-          localStorage.removeItem("activeUser");
-          setIsDataLoaded(false);
-          setCurrentUser(null);
-          setLoginName("");
-          setCoins(5000);
-          setParcelaObjects([]);
-          setTasks([]);
-          setActiveTaskId(null);
-          setAnimationState("idle");
-          changeThemeColor("indigo", false);
-      }
-  };
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-        const now = new Date();
-        setTasks(currentTasks => {
-            let penaltyOccurred = false;
-            let penaltyAmount = 0;
-            const remainingTasks = currentTasks.filter(t => {
-                if (t.completed || !t.deadline || t.archived) return true;
-                const isExpired = new Date(t.deadline) < now;
-                if (isExpired) {
-                    if (t.inProgress) {
-                        penaltyOccurred = true;
-                        penaltyAmount += t.reward;
-                        if (t.id === activeTaskId) setActiveTaskId(null);
-                    }
-                    return false; 
-                }
-                return true;
-            });
-            if (penaltyOccurred && penaltyAmount > 0) {
-                setTimeout(() => {
-                    setCoins(c => Math.max(0, c - penaltyAmount));
-                    showToast(`¡Tarea vencida! -${penaltyAmount} monedas`, "error");
-                }, 0);
-            }
-            return remainingTasks;
-        });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [activeTaskId, showToast]);
-
-  useEffect(() => {
-    let interval;
-    if (animationState === "chopping") interval = setInterval(() => setLumberjackFrame(p => (p + 1) % 2), 300);
-    else if (animationState === "sitting") interval = setInterval(() => setLumberjackFrame(p => (p + 1) % 2), 500);
-    else setLumberjackFrame(0);
-    return () => clearInterval(interval);
-  }, [animationState]);
-
-  useEffect(() => {
-    const working = tasks.some(t => t.inProgress && !t.archived); 
-    if (!activeTaskId && !working && animationState === "chopping") {
-      setIsAnimating(true); setAnimationState("sitting");
-      setTimeout(() => { setAnimationState("idle"); setIsAnimating(false); }, 2000);
-    } else if (working && animationState !== "chopping") {
-      setAnimationState("chopping");
-    }
-  }, [activeTaskId, tasks, animationState]);
-
-  useEffect(() => {
-    return () => {
-      if (resetTimeoutRef.current) clearTimeout(resetTimeoutRef.current);
-    };
+      setIsDataLoaded(false);
+    });
+    return () => unsub && unsub();
   }, []);
 
-  const closeAllMenus = () => { setConfigDropdownOpen(false); setTycoonPanelOpen(false); setIsContactOpen(false); setIsBannerExpanded(false); }; 
+  const smartSave = async (dataToSave: any) => {
+      if (!currentUser) return;
+      setIsSaving(true);
+      try {
+          await saveUserData(currentUser, dataToSave);
+      } catch (error) {
+          console.error("Error al guardar:", error);
+      } finally {
+          setTimeout(() => setIsSaving(false), 800);
+      }
+  };
+
+  const objectsSaveRef = useRef<number | null>(null);
+  const tasksSaveRef = useRef<number | null>(null);
+
+  // --- CARGA DE DATOS CORREGIDA (Lógica de Rescate) ---
+  useEffect(() => {
+    let mounted = true;
+    async function loadUserData() {
+      if (!currentUser) { setIsDataLoaded(false); return; }
+      
+      try {
+        const data = await getUserData(currentUser);
+        if (!mounted) return;
+
+        if (data) {
+          // 1. Datos de Firebase
+          let loadedObjects = Array.isArray(data.objects) ? data.objects : [];
+          
+          // 2. Verificar LocalStorage
+          const localBackupStr = localStorage.getItem(`${currentUser}_objects`);
+          if (localBackupStr) {
+              try {
+                  const localBackup = JSON.parse(localBackupStr);
+                  if (Array.isArray(localBackup)) {
+                      // --- CORRECCIÓN CRÍTICA ---
+                      // Si el backup local tiene MÁS objetos que Firebase, confiamos en el local.
+                      // Esto arregla el problema de que el F5 borre objetos no guardados.
+                      if (localBackup.length > loadedObjects.length) {
+                          console.warn("⚠️ Recuperando datos locales (son más recientes)...");
+                          loadedObjects = localBackup;
+                          smartSave({ objects: loadedObjects }); // Actualizamos la nube
+                      }
+                  }
+              } catch(e) {}
+          }
+
+          setCoins(typeof data.coins === 'number' ? data.coins : 0);
+          setParcelaObjects(loadedObjects);
+          objectsRef.current = loadedObjects; 
+          setTasks(Array.isArray(data.tasks) ? (data.tasks as Task[]).map((t: Task) => ({ ...t, archived: t.archived || false })) : DEFAULT_TASKS);
+          setUsername(data.username || null);
+          
+          if (!data.username) setUsernameModalOpen(true);
+          changeThemeColor(data.theme || 'indigo', false);
+          
+        } else {
+          // Usuario Nuevo o sin datos en nube
+          const localCoins = parseInt(localStorage.getItem(`${currentUser}_coins`) || '0');
+          let localObjects: ParcelaObject[] = [];
+          try { localObjects = JSON.parse(localStorage.getItem(`${currentUser}_objects`) || '[]'); } catch(e) {}
+          let localTasks: Task[] = DEFAULT_TASKS;
+          try { 
+             const parsed = JSON.parse(localStorage.getItem(`${currentUser}_tasks`) || '[]');
+             if(Array.isArray(parsed) && parsed.length > 0) localTasks = parsed;
+          } catch(e) {}
+          const localTheme = localStorage.getItem(`${currentUser}_theme`) || 'indigo';
+
+          setCoins(localCoins);
+          setParcelaObjects(localObjects);
+          objectsRef.current = localObjects;
+          setTasks(localTasks);
+          setUsername(null);
+          setUsernameModalOpen(true);
+          changeThemeColor(localTheme, false);
+
+          await smartSave({ 
+             coins: localCoins, 
+             objects: localObjects, 
+             tasks: localTasks, 
+             theme: localTheme 
+          });
+        }
+        
+        setIsDataLoaded(true);
+
+      } catch (err) {
+        console.error('Error cargando:', err);
+        setIsDataLoaded(true); 
+      }
+    }
+
+    loadUserData();
+    return () => { mounted = false; };
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (currentUser && isDataLoaded) {
+      localStorage.setItem(`${currentUser}_coins`, coins.toString());
+      smartSave({ coins });
+    }
+  }, [coins, currentUser, isDataLoaded]);
+
+  useEffect(() => {
+    if (currentUser && isDataLoaded && !isDragging) {
+      localStorage.setItem(`${currentUser}_objects`, JSON.stringify(parcelaObjects));
+      if (objectsSaveRef.current) window.clearTimeout(objectsSaveRef.current);
+      objectsSaveRef.current = window.setTimeout(() => {
+        smartSave({ objects: parcelaObjects });
+      }, 1000);
+    }
+  }, [parcelaObjects, currentUser, isDataLoaded, isDragging]);
+
+  useEffect(() => {
+    if (currentUser && isDataLoaded) {
+      localStorage.setItem(`${currentUser}_tasks`, JSON.stringify(tasks));
+      if (tasksSaveRef.current) window.clearTimeout(tasksSaveRef.current);
+      tasksSaveRef.current = window.setTimeout(() => {
+        smartSave({ tasks });
+      }, 1000);
+    }
+  }, [tasks, currentUser, isDataLoaded]);
+
+  useEffect(() => {
+    const activeTask = tasks.find(t => t.inProgress && !t.archived);
+    if (activeTask) { setActiveTaskId(activeTask.id); setAnimationState('chopping'); }
+    else { setActiveTaskId(null); setAnimationState('idle'); }
+  }, [tasks]);
+
+  useEffect(() => {
+      let interval: number | undefined;
+      if (animationState === "chopping") interval = window.setInterval(() => setLumberjackFrame(p => (p + 1) % 2), 300) as unknown as number;
+      else if (animationState === "sitting") interval = window.setInterval(() => setLumberjackFrame(p => (p + 1) % 2), 500) as unknown as number;
+      else setLumberjackFrame(0);
+      return () => { if (interval !== undefined) window.clearInterval(interval); };
+  }, [animationState]);
+
+  const closeAllMenus = () => { setConfigDropdownOpen(false); setTycoonPanelOpen(false); setIsContactOpen(false); setIsBannerExpanded(false); };
   const toggleStoreDrawer = () => { closeAllMenus(); setStoreDrawerOpen(!storeDrawerOpen); };
   const toggleActivitiesDrawer = () => { closeAllMenus(); setActivitiesDrawerOpen(!activitiesDrawerOpen); };
   const toggleConfig = () => { closeAllMenus(); setStoreDrawerOpen(false); setActivitiesDrawerOpen(false); setConfigDropdownOpen(!configDropdownOpen); };
   const toggleTycoonPanel = () => { closeAllMenus(); setStoreDrawerOpen(false); setActivitiesDrawerOpen(false); setTycoonPanelOpen(!tycoonPanelOpen); };
 
-  const handleAddTask = (e) => {
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    try {
+      await signInWithEmail(email.trim(), password);
+      setEmail(""); setPassword("");
+      showToast('Sesión iniciada', 'success');
+    } catch (err: any) {
+       setLoginErrorMessage("Error al iniciar sesión");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignup = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    try {
+      await signUpWithEmail(email.trim(), password);
+      setEmail(""); setPassword("");
+      showToast('Cuenta creada', 'success');
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const createAccount = async () => {
+    setAuthLoading(true);
+    try {
+      await signUpWithEmail(email.trim(), password);
+      setSignupPrompt(false);
+      setEmail(""); setPassword("");
+      showToast('Cuenta creada', 'success');
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (!confirm("¿Cerrar sesión?")) return;
+    await signOutUser();
+    setIsDataLoaded(false);
+    setCurrentUser(null);
+    setParcelaObjects([]);
+    setTasks([]);
+  };
+
+  const handleUsernameSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!currentUser) return;
+    const val = desiredUsername.trim().toLowerCase();
+    setUsernameChecking(true);
+    try {
+      await registerUsername(val, currentUser);
+      setUsername(val);
+      setUsernameModalOpen(false);
+      showToast('Nombre guardado', 'success');
+    } catch (err: any) {
+      setUsernameError('Error al guardar o nombre en uso');
+    } finally {
+      setUsernameChecking(false);
+    }
+  };
+
+  const handleBuyItem = (item: StoreItem) => {
+    if (isAnimating) return;
+    if (coins >= item.cost) {
+      const newCoins = coins - item.cost;
+      const newObj: ParcelaObject = { 
+          id: Date.now() + Math.random(), 
+          name: item.name, 
+          objectId: item.objectId || '', 
+          lucideIcon: item.lucideIcon, 
+          cost: item.cost, 
+          position: { top: 50, left: 50 } 
+      };
+
+      setCoins(newCoins);
+      const newObjects = [...parcelaObjects, newObj];
+      setParcelaObjects(newObjects);
+      objectsRef.current = newObjects;
+
+      localStorage.setItem(`${currentUser}_objects`, JSON.stringify(newObjects));
+      localStorage.setItem(`${currentUser}_coins`, newCoins.toString());
+      smartSave({ coins: newCoins, objects: newObjects });
+
+      showToast("Comprado", "success");
+    } else showToast("Faltan monedas", "error");
+  };
+
+  const removeParcelaObject = (id: string | number) => {
+    const newObjects = parcelaObjects.filter(o => o.id !== id);
+    setParcelaObjects(newObjects);
+    objectsRef.current = newObjects;
+    localStorage.setItem(`${currentUser}_objects`, JSON.stringify(newObjects));
+    smartSave({ objects: newObjects });
+  };
+
+  const handleAddTask = (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
-      const name = e.target.taskName.value.trim();
-      const reward = parseInt(e.target.taskReward.value);
-      const deadline = e.target.taskDeadline.value;
-      if (!name || isNaN(reward) || reward <= 0) return showToast("Datos inválidos", "error");
-      setTasks(prev => [...prev, { id: Date.now(), name, reward, completed: false, inProgress: false, deadline: deadline || null, proofImage: null, archived: false }]);
+      const target = e.currentTarget as any;
+      const name = target.taskName.value;
+      const reward = parseInt(target.taskReward.value);
+      const deadline = target.taskDeadline.value;
+      
+      const newTasks = [...tasks, { id: Date.now(), name, reward, completed: false, inProgress: false, deadline: deadline || null, proofImage: null, archived: false }];
+      setTasks(newTasks);
       setIsAddTaskModalOpen(false);
-      showToast("Tarea guardada", "info");
+      smartSave({ tasks: newTasks });
   };
 
-  const handleStartTask = (id) => {
-      if(isAnimating) return;
-      setTasks(prev => prev.map(t => t.id === id ? {...t, inProgress: true} : {...t, inProgress: false}));
-      setActiveTaskId(id); setAnimationState("chopping"); 
+  const handleStartTask = (id: number) => {
+      const newTasks = tasks.map(t => t.id === id ? { ...t, inProgress: true } : { ...t, inProgress: false });
+      setTasks(newTasks);
+      smartSave({ tasks: newTasks });
   };
 
-  const triggerFileUpload = (taskId) => {
-      if (isAnimating) return;
+  const triggerFileUpload = (taskId: number) => {
       setTaskToCompleteId(taskId);
-      if (fileInputRef.current) fileInputRef.current.click();
+      if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+          fileInputRef.current.click();
+      }
   };
 
-  const handleFileChange = async (e) => {
-      const file = e.target.files[0];
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files ? e.target.files[0] : null;
       if (!file || !taskToCompleteId) return;
+      
       try {
           setIsAnimating(true);
-          // USAMOS LA NUEVA FUNCIÓN DE COMPRESIÓN AQUÍ
-          const base64Image = await compressImage(file);
+          const base64 = await compressImage(file);
           
           const task = tasks.find(t => t.id === taskToCompleteId);
           const reward = task ? task.reward : 0;
           
-          setTasks(prev => prev.map(t => t.id === taskToCompleteId ? { ...t, completed: true, inProgress: false, proofImage: base64Image } : t));
-          setCoins(c => c + reward);
+          const newTasks = tasks.map(t => t.id === taskToCompleteId ? { ...t, completed: true, inProgress: false, proofImage: base64 } : t);
+          setTasks(newTasks);
           
-          setActiveTaskId(null);
-          showToast(`¡+${reward} monedas! Foto guardada.`, "success");
+          const newCoins = coins + reward;
+          setCoins(newCoins);
+
+          smartSave({ tasks: newTasks, coins: newCoins });
           
-          setTimeout(() => setIsAnimating(false), 500);
-      } catch (error) {
-          console.error(error);
-          showToast("Error: La imagen es muy pesada o inválida.", "error");
+          showToast(`¡+${reward} monedas!`, 'success');
           setIsAnimating(false);
-      } finally {
-          setTaskToCompleteId(null);
-          e.target.value = "";
+      } catch (e) {
+          setIsAnimating(false);
+          showToast("Error procesando imagen", 'error');
       }
+      setTaskToCompleteId(null);
   };
 
   const handleDeleteAllTasks = () => {
     if (isResetConfirming) {
-        setTasks(prev => prev.map(t => ({ ...t, archived: true, inProgress: false })));
-        setActiveTaskId(null);
-        setAnimationState("idle");
-        setIsResetConfirming(false);
-        showToast("Lista limpiada. Datos guardados en historial.", "info");
-        if (resetTimeoutRef.current) clearTimeout(resetTimeoutRef.current);
+      setTasks(prev => prev.map(t => ({ ...t, archived: true, inProgress: false })));
+      setActiveTaskId(null);
+      setAnimationState("idle");
+      setIsResetConfirming(false);
     } else {
-        setIsResetConfirming(true);
-        showToast("Click de nuevo para archivar todo.", "warning");
-        resetTimeoutRef.current = setTimeout(() => {
-            setIsResetConfirming(false);
-        }, 3000);
+      setIsResetConfirming(true);
+      resetTimeoutRef.current = setTimeout(() => setIsResetConfirming(false), 3000);
     }
   };
 
-  const handleBuyItem = (item) => {
-      if(isAnimating) return;
-      if(coins >= item.cost) {
-          setCoins(c => c - item.cost);
-          setParcelaObjects(prev => [...prev, { id: Date.now() + Math.random(), name: item.name, objectId: item.objectId, lucideIcon: item.lucideIcon, cost: item.cost, position: { top: 50, left: 50 } }]);
-          showToast("Comprado", "success");
-      } else showToast("Faltan monedas", "error");
-  };
+  const handleDragStart = (e: React.MouseEvent | React.TouchEvent, id: string | number, pos: { top: number; left: number }) => {
+    if (e.type === 'touchstart' && (e as React.TouchEvent).touches && (e as React.TouchEvent).touches.length > 1) return;
+    (e as React.UIEvent).stopPropagation();
+    if ((e as React.MouseEvent).button !== undefined && (e as React.MouseEvent).button !== 0) return;
+    if (isAnimating) return;
 
-  const removeParcelaObject = (id) => {
-      setParcelaObjects(prev => prev.filter(o => o.id !== id));
-      showToast("Eliminado", "info");
-  };
+    const clientX = (e as any).type && (e as any).type.includes('touch') ? (e as any).touches[0].clientX : (e as any).clientX;
+    const clientY = (e as any).type && (e as any).type.includes('touch') ? (e as any).touches[0].clientY : (e as any).clientY;
 
-  // --- ARRASTRE OBJETOS ---
-  const handleDragStart = (e, id, pos) => {
-      if (e.type === 'touchstart' && e.touches.length > 1) return;
-      e.stopPropagation(); 
-      
-      if(e.type === 'mousedown') {
-        if(e.button !== 0) return;
-        e.preventDefault();
-      }
+    setIsDragging(true);
+    setDraggedObjectId(id);
 
-      if (isAnimating) return;
-
-      const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
-      const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
-
-      setIsDragging(true); 
-      setDraggedObjectId(id);
-      
-      if (parcelaRef.current) {
-        const rect = parcelaRef.current.getBoundingClientRect();
-        dragOffset.current = { 
-            x: clientX - (rect.left + (rect.width * pos.left / 100)), 
-            y: clientY - (rect.top + (rect.height * pos.top / 100)) 
-        };
-      }
-  };
-
-  const handleDrag = useCallback((e) => {
-      if(!isDragging || !draggedObjectId || !parcelaRef.current) return;
-      e.preventDefault(); 
-
-      const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
-      const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
-
+    if (parcelaRef.current) {
       const rect = parcelaRef.current.getBoundingClientRect();
-      
-      let left = Math.max(0, Math.min(100, ((clientX - rect.left - dragOffset.current.x) / rect.width) * 100));
-      let top = Math.max(0, Math.min(100, ((clientY - rect.top - dragOffset.current.y) / rect.height) * 100));
-      
-      setParcelaObjects(prev => prev.map(o => o.id === draggedObjectId ? {...o, position: {top, left}} : o));
+      dragOffset.current = {
+        x: clientX - (rect.left + (rect.width * pos.left / 100)),
+        y: clientY - (rect.top + (rect.height * pos.top / 100))
+      };
+    }
+  };
+
+  const handleDrag = useCallback((e: MouseEvent | TouchEvent) => {
+    if (!isDragging || !draggedObjectId || !parcelaRef.current) return;
+    e.preventDefault();
+    const clientX = (e as TouchEvent).type && (e as TouchEvent).type.includes('touch') ? (e as TouchEvent).touches[0].clientX : (e as MouseEvent).clientX;
+    const clientY = (e as TouchEvent).type && (e as TouchEvent).type.includes('touch') ? (e as TouchEvent).touches[0].clientY : (e as MouseEvent).clientY;
+    const rect = parcelaRef.current.getBoundingClientRect();
+    let left = Math.max(0, Math.min(100, ((clientX - rect.left - dragOffset.current.x) / rect.width) * 100));
+    let top = Math.max(0, Math.min(100, ((clientY - rect.top - dragOffset.current.y) / rect.height) * 100));
+    setParcelaObjects(prev => prev.map(o => o.id === draggedObjectId ? { ...o, position: { top, left } } : o));
   }, [isDragging, draggedObjectId]);
 
-  const handleDragEnd = () => { setIsDragging(false); setDraggedObjectId(null); };
-  
+  const handleDragEnd = async () => {
+    setIsDragging(false);
+    setDraggedObjectId(null);
+
+    if (currentUser && objectsRef.current.length > 0) {
+      const currentObjs = objectsRef.current;
+      localStorage.setItem(`${currentUser}_objects`, JSON.stringify(currentObjs));
+      smartSave({ objects: currentObjs });
+    }
+  };
+
   useEffect(() => {
-      if(isDragging) { 
-          window.addEventListener('mousemove', handleDrag); 
-          window.addEventListener('mouseup', handleDragEnd);
-          window.addEventListener('touchmove', handleDrag, { passive: false }); 
-          window.addEventListener('touchend', handleDragEnd);
-      }
-      else { 
-          window.removeEventListener('mousemove', handleDrag); 
-          window.removeEventListener('mouseup', handleDragEnd);
-          window.removeEventListener('touchmove', handleDrag); 
-          window.removeEventListener('touchend', handleDragEnd);
-      }
-      return () => { 
-          window.removeEventListener('mousemove', handleDrag); 
-          window.removeEventListener('mouseup', handleDragEnd);
-          window.removeEventListener('touchmove', handleDrag); 
-          window.removeEventListener('touchend', handleDragEnd);
-      };
+    if (isDragging) {
+      window.addEventListener('mousemove', handleDrag);
+      window.addEventListener('mouseup', handleDragEnd);
+      window.addEventListener('touchmove', handleDrag, { passive: false });
+      window.addEventListener('touchend', handleDragEnd);
+    } else {
+      window.removeEventListener('mousemove', handleDrag);
+      window.removeEventListener('mouseup', handleDragEnd);
+      window.removeEventListener('touchmove', handleDrag);
+      window.removeEventListener('touchend', handleDragEnd);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleDrag);
+      window.removeEventListener('mouseup', handleDragEnd);
+      window.removeEventListener('touchmove', handleDrag);
+      window.removeEventListener('touchend', handleDragEnd);
+    };
   }, [isDragging, handleDrag]);
 
-  // --- ZOOM Y PAN DEL MAPA (SOLO SI ES MÓVIL) ---
-  const handleContainerTouchStart = (e) => {
+  const handleContainerTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (!isMobile || isAnyMenuOpen) return;
-
     if (e.touches.length === 2) {
-      const dist = getDistance(e.touches);
-      const mid = getMidpoint(e.touches);
-      lastTouchRef.current = { distance: dist, x: mid.x, y: mid.y };
+      lastTouchRef.current = { distance: getDistance(e.touches), x: getMidpoint(e.touches).x, y: getMidpoint(e.touches).y };
     } else if (e.touches.length === 1 && !isDragging) {
       lastTouchRef.current = { distance: null, x: e.touches[0].clientX, y: e.touches[0].clientY };
     }
   };
 
-  const handleContainerTouchMove = (e) => {
+  const handleContainerTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
     if (!isMobile || isDragging || isAnyMenuOpen) return;
-
     if (e.touches.length === 2) {
       e.preventDefault();
       const dist = getDistance(e.touches);
       const mid = getMidpoint(e.touches);
-      
-      const scaleFactor = dist / lastTouchRef.current.distance;
-      const newScale = Math.min(Math.max(0.5, viewTransform.scale * scaleFactor), 4); 
-      
+      const scaleFactor = dist / (lastTouchRef.current.distance || dist);
+      const newScale = Math.min(Math.max(0.5, viewTransform.scale * scaleFactor), 4);
       const dx = mid.x - lastTouchRef.current.x;
       const dy = mid.y - lastTouchRef.current.y;
-
-      setViewTransform(prev => ({
-        scale: newScale,
-        x: prev.x + dx,
-        y: prev.y + dy
-      }));
-
+      setViewTransform(prev => ({ scale: newScale, x: prev.x + dx, y: prev.y + dy }));
       lastTouchRef.current = { distance: dist, x: mid.x, y: mid.y };
     } else if (e.touches.length === 1) {
       const dx = e.touches[0].clientX - lastTouchRef.current.x;
       const dy = e.touches[0].clientY - lastTouchRef.current.y;
-      
-      setViewTransform(prev => ({
-        ...prev,
-        x: prev.x + dx,
-        y: prev.y + dy
-      }));
-      
+      setViewTransform(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
       lastTouchRef.current = { ...lastTouchRef.current, x: e.touches[0].clientX, y: e.touches[0].clientY };
     }
   };
 
-  const changeThemeColor = (color, save = true) => {
-      const colors = {
-          indigo: { primary: "#4f46e5", bg: "#a5b4fc" }, 
-          pink: { primary: "#ec4899", bg: "#f9a8d4" },   
-          teal: { primary: "#0d9488", bg: "#5eead4" },   
-          yellow: { primary: "#ca8a04", bg: "#fcd34d" }, 
-      };
-      let p, b;
-      if (color.startsWith("#")) {
-          p = color;
-          try { const rgb = hexToRgb(color); b = `rgba(${rgb}, 0.4)`; } catch(e) { b = "#e0e7ff"; }
-      } else {
-          p = colors[color].primary; b = colors[color].bg;
-      }
-      
-      document.documentElement.style.setProperty("--theme-color-primary", p);
-      document.documentElement.style.setProperty("--theme-color-bg", b);
-      document.documentElement.style.setProperty("--theme-rgb", hexToRgb(p));
-      
-      if(save && currentUser) localStorage.setItem(`${currentUser}_theme`, color);
-      if(!color.startsWith("#")) setConfigDropdownOpen(false);
+  const changeThemeColor = (color: string, save = true) => {
+    const colors = {
+      indigo: { primary: "#4f46e5", bg: "#a5b4fc" },
+      pink: { primary: "#ec4899", bg: "#f9a8d4" },
+      teal: { primary: "#0d9488", bg: "#5eead4" },
+      yellow: { primary: "#ca8a04", bg: "#fcd34d" },
+    };
+    let p, b;
+    if (color.startsWith("#")) {
+      p = color;
+      try { const rgb = hexToRgb(color); b = `rgba(${rgb}, 0.4)`; } catch (e) { b = "#e0e7ff"; }
+    } else {
+      const key = color as keyof typeof colors;
+      if (colors[key]) { p = colors[key].primary; b = colors[key].bg; } 
+      else { p = '#4f46e5'; b = '#a5b4fc'; }
+    }
+    document.documentElement.style.setProperty("--theme-color-primary", p);
+    document.documentElement.style.setProperty("--theme-color-bg", b);
+    document.documentElement.style.setProperty("--theme-rgb", hexToRgb(p));
+    if (save && currentUser) {
+      smartSave({ theme: color });
+    }
+    if (!color.startsWith("#")) setConfigDropdownOpen(false);
   };
 
   const getLumberjackImage = () => {
@@ -549,8 +637,8 @@ function App() {
     if (animationState === "chopping") return images.lumberjack.chopping[lumberjackFrame];
     return images.lumberjack.sitting[lumberjackFrame];
   };
-  
-  const storeItems = [
+
+  const storeItems: StoreItem[] = [
     { name: "Perro", description: "Un fiel compañero.", cost: 150, type: "object", objectId: "perro", lucideIcon: Heart },
     { name: "Gato", description: "Un adorable gatito.", cost: 100, type: "object", objectId: "gato", lucideIcon: Cat },
     { name: "Casa", description: "Una hermosa casa.", cost: 500, type: "object", objectId: "casa", lucideIcon: Home },
@@ -561,65 +649,93 @@ function App() {
     objects: { perro: perroImg, gato: gatoImg, casa: casaImg },
   };
 
-  const DonutChart = ({ tasks }) => {
-      const total = tasks.length === 0 ? 1 : tasks.length;
-      const completed = tasks.filter(t => t.completed).length;
-      const inProgress = tasks.filter(t => t.inProgress).length;
-      const pending = total - completed - inProgress;
-      
-      const r = 16; const c = 2 * Math.PI * r; 
-      const p1 = (completed / total) * c;
-      const p2 = (inProgress / total) * c;
-      const p3 = (pending / total) * c;
-
-      return (
-          <div className="flex items-center gap-6">
-             <div className="relative w-32 h-32">
-                <svg viewBox="0 0 40 40" className="transform -rotate-90 w-full h-full">
-                   <circle cx="20" cy="20" r="16" fill="transparent" stroke="#e5e7eb" strokeWidth="8" />
-                   <circle cx="20" cy="20" r="16" fill="transparent" stroke="#22c55e" strokeWidth="8" strokeDasharray={`${p1} ${c}`} />
-                   <circle cx="20" cy="20" r="16" fill="transparent" stroke="#3b82f6" strokeWidth="8" strokeDasharray={`${p2} ${c}`} strokeDashoffset={-p1} />
-                   <circle cx="20" cy="20" r="16" fill="transparent" stroke="#f59e0b" strokeWidth="8" strokeDasharray={`${p3} ${c}`} strokeDashoffset={-(p1 + p2)} />
-                </svg>
-                <div className="absolute inset-0 flex items-center justify-center"><div className="text-center"><p className="text-xl font-black text-gray-700">{tasks.length}</p><p className="text-[8px] text-gray-400 uppercase">Total</p></div></div>
-             </div>
-             <div className="space-y-2 text-xs font-medium text-gray-600">
-                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-green-500"></div> Terminadas ({completed})</div>
-                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div> En Proceso ({inProgress})</div>
-                 <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-yellow-500"></div> Pendientes ({pending})</div>
-             </div>
-          </div>
-      );
+  const DonutChart: React.FC<{ tasks: Task[] }> = ({ tasks }) => {
+    const total = tasks.length === 0 ? 1 : tasks.length;
+    const completed = tasks.filter((t: Task) => t.completed).length;
+    const inProgress = tasks.filter((t: Task) => t.inProgress).length;
+    const pending = total - completed - inProgress;
+    const r = 16; const c = 2 * Math.PI * r;
+    const p1 = (completed / total) * c;
+    const p2 = (inProgress / total) * c;
+    const p3 = (pending / total) * c;
+    return (
+      <div className="flex items-center gap-6">
+        <div className="relative w-32 h-32">
+          <svg viewBox="0 0 40 40" className="transform -rotate-90 w-full h-full">
+            <circle cx="20" cy="20" r="16" fill="transparent" stroke="#e5e7eb" strokeWidth="8" />
+            <circle cx="20" cy="20" r="16" fill="transparent" stroke="#22c55e" strokeWidth="8" strokeDasharray={`${p1} ${c}`} />
+            <circle cx="20" cy="20" r="16" fill="transparent" stroke="#3b82f6" strokeWidth="8" strokeDasharray={`${p2} ${c}`} strokeDashoffset={-p1} />
+            <circle cx="20" cy="20" r="16" fill="transparent" stroke="#f59e0b" strokeWidth="8" strokeDasharray={`${p3} ${c}`} strokeDashoffset={-(p1 + p2)} />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center"><div className="text-center"><p className="text-xl font-black text-gray-700">{tasks.length}</p><p className="text-[8px] text-gray-400 uppercase">Total</p></div></div>
+        </div>
+        <div className="space-y-2 text-xs font-medium text-gray-600">
+          <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-green-500"></div> Terminadas ({completed})</div>
+          <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div> En Proceso ({inProgress})</div>
+          <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-yellow-500"></div> Pendientes ({pending})</div>
+        </div>
+      </div>
+    );
   };
 
   const LineChart = () => (
-      <div className="w-full h-32 flex items-end justify-between gap-1 pt-4">
-          {[40, 60, 35, 80, 55, 90, 45, 70, 50, 95, 65, 85].map((h, i) => (
-              <div key={i} className="w-full bg-indigo-200/50 rounded-t-sm hover:bg-indigo-400 transition-all relative group" style={{height: `${h}%`}}>
-                  <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-black/80 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition">{h}%</div>
-              </div>
-          ))}
-      </div>
+    <div className="w-full h-32 flex items-end justify-between gap-1 pt-4">
+      {[40, 60, 35, 80, 55, 90, 45, 70, 50, 95, 65, 85].map((h, i) => (
+        <div key={i} className="w-full bg-indigo-200/50 rounded-t-sm hover:bg-indigo-400 transition-all relative group" style={{ height: `${h}%` }}>
+          <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-black/80 text-white text-[10px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition">{h}%</div>
+        </div>
+      ))}
+    </div>
   );
 
   if (!currentUser) {
-      return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-100 relative overflow-hidden">
-            <style>{`@keyframes float { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-10px); } } .float-anim { animation: float 6s ease-in-out infinite; }`}</style>
-            <div className="absolute inset-0 bg-gradient-to-br from-indigo-500 to-purple-600 opacity-90"></div>
-            <div className="absolute inset-0 opacity-20" style={{backgroundImage: `url(${images.parcela})`, backgroundSize: 'cover'}}></div>
-            <div className="relative z-10 bg-white/20 backdrop-blur-xl p-10 rounded-3xl shadow-2xl border border-white/40 text-center max-w-md w-full mx-4 float-anim">
-                <div className="mb-6 inline-block p-4 bg-white/30 rounded-full shadow-lg"><User size={48} className="text-white" /></div>
-                <h1 className="text-5xl font-black text-white mb-1 tracking-tighter drop-shadow-md">YOTIP</h1>
-                <p className="text-xs text-indigo-100 uppercase tracking-widest font-bold mb-6">Your Time, Your Productivity</p>
-                <p className="text-indigo-50 mb-8 font-medium text-sm">Ingresa tu nombre para acceder a tu espacio.</p>
-                <form onSubmit={handleLogin} className="space-y-4">
-                    <input autoFocus type="text" placeholder="Tu Gamertag..." value={loginName} onChange={(e) => setLoginName(e.target.value)} className="w-full px-6 py-4 rounded-xl bg-white/90 border-0 text-gray-800 font-bold text-lg placeholder-gray-400 focus:ring-4 focus:ring-indigo-400/50 transition outline-none shadow-inner text-center" />
-                    <button type="submit" disabled={!loginName.trim()} className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-400 text-white font-bold rounded-xl shadow-lg transform transition hover:scale-105 active:scale-95 text-lg">Entrar</button>
-                </form>
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 relative overflow-hidden">
+        <style>{`@keyframes float { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-10px); } } .float-anim { animation: float 6s ease-in-out infinite; }`}</style>
+        <div className="absolute inset-0 bg-gradient-to-br from-indigo-500 to-purple-600 opacity-90"></div>
+        <div className="absolute inset-0 opacity-20" style={{ backgroundImage: `url(${images.parcela})`, backgroundSize: 'cover' }}></div>
+        <div className="relative z-10 bg-white/20 backdrop-blur-xl p-10 rounded-3xl shadow-2xl border border-white/40 text-center max-w-md w-full mx-4 float-anim">
+          <div className="mb-6 inline-block p-4 bg-white/30 rounded-full shadow-lg"><User size={48} className="text-white" /></div>
+          <h1 className="text-5xl font-black text-white mb-1 tracking-tighter drop-shadow-md">YOTIP</h1>
+          <p className="text-xs text-indigo-100 uppercase tracking-widest font-bold mb-6">Your Time, Your Productivity</p>
+          <p className="text-indigo-50 mb-4 font-medium text-sm">Accede a tu espacio con correo y contraseña.</p>
+          <div className="mb-4 flex gap-2 justify-center">
+            <button type="button" onClick={() => setIsSignup(false)} className={`px-4 py-2 rounded-xl font-bold ${!isSignup ? 'bg-white text-indigo-700' : 'bg-white/30 text-white'}`}>Iniciar sesión</button>
+            <button type="button" onClick={() => setIsSignup(true)} className={`px-4 py-2 rounded-xl font-bold ${isSignup ? 'bg-white text-indigo-700' : 'bg-white/30 text-white'}`}>Crear cuenta</button>
+          </div>
+          {loginErrorMessage && (
+            <div role="alert" aria-live="assertive" className="mb-3 flex items-start gap-3 bg-white/30 border border-red-400 text-red-800 px-3 py-2 rounded-lg">
+              <AlertTriangle className="text-red-700 mt-0.5" />
+              <div className="text-sm font-bold">{loginErrorMessage}</div>
             </div>
+          )}
+          <form onSubmit={isSignup ? handleSignup : handleLogin} className="space-y-4">
+            <label className="text-xs text-indigo-100 font-medium text-left block">Correo electrónico</label>
+            <input autoFocus type="email" placeholder="tu@correo.com" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-white/90 border-0 text-gray-800 font-medium placeholder-gray-400 focus:ring-4 focus:ring-indigo-400/50 transition outline-none shadow-inner" />
+            <label className="text-xs text-indigo-100 font-medium text-left block">Contraseña</label>
+            <input type="password" placeholder="Contraseña (mín. 6 caracteres)" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-white/90 border-0 text-gray-800 font-medium placeholder-gray-400 focus:ring-4 focus:ring-indigo-400/50 transition outline-none shadow-inner" />
+            {password && password.length > 0 && password.length < 6 && (
+              <p className="text-xs text-red-300 text-left">La contraseña debe tener al menos 6 caracteres.</p>
+            )}
+            <div className="flex gap-2">
+              <button type="submit" disabled={authLoading || !email.trim() || !password} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg transition">
+                {authLoading ? (isSignup ? 'Creando...' : 'Ingresando...') : (isSignup ? 'Crear cuenta' : 'Entrar')}
+              </button>
+              <button type="button" onClick={() => { setIsSignup(s => !s); setLoginErrorMessage(''); }} className="flex-1 py-3 bg-white/60 text-indigo-700 font-bold rounded-xl border border-white/40">{isSignup ? 'Ya tengo cuenta' : 'Crear cuenta'}</button>
+            </div>
+            {signupPrompt && (
+              <div className="mt-3 text-sm text-center">
+                <p className="text-red-600 mb-2">{signupPromptMessage}</p>
+                <div className="flex gap-2 justify-center">
+                  <button type="button" onClick={createAccount} className="px-4 py-2 bg-green-600 text-white rounded-xl">Crear cuenta</button>
+                  <button type="button" onClick={() => setSignupPrompt(false)} className="px-4 py-2 bg-gray-200 rounded-xl">Cancelar</button>
+                </div>
+              </div>
+            )}
+          </form>
         </div>
-      );
+      </div>
+    );
   }
 
   return (
@@ -635,34 +751,46 @@ function App() {
         .color-input-fix { position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; padding: 0; margin: 0; cursor: pointer; border: none; }
         .parcela-object { position: absolute; transform: translate(-50%, -50%); cursor: grab; user-select: none; transition: transform 0.1s; }
         .parcela-object:active { cursor: grabbing; transform: translate(-50%, -50%) scale(0.95); }
-        .house-size { width: 16rem; height: 16rem; }
-        .standard-size { width: 6rem; height: 6rem; }
       `}</style>
 
-      <input type="file" ref={fileInputRef} onChange={handleFileChange} accept="image/*" style={{ display: 'none' }} />
+      <input 
+        type="file" 
+        ref={fileInputRef} 
+        onChange={handleFileChange} 
+        accept="image/png, image/jpeg, image/webp" 
+        className="hidden" 
+      />
+
+      {isSaving && (
+        <div className="fixed top-4 right-4 z-[100] bg-black/80 backdrop-blur-md text-white px-4 py-2 rounded-full shadow-2xl border border-white/20 flex items-center gap-3 animate-pulse">
+            <Loader2 className="animate-spin text-indigo-400" size={18}/>
+            <span className="text-xs font-bold tracking-wider uppercase">Guardando...</span>
+        </div>
+      )}
 
       <div className="hidden" style={{ display: 'none' }}>
-          <img src={images.lumberjack.idle} alt="preload" />
-          {images.lumberjack.chopping.map((src, i) => <img key={`chop-${i}`} src={src} alt="preload" />)}
-          {images.lumberjack.sitting.map((src, i) => <img key={`sit-${i}`} src={src} alt="preload" />)}
+        <img src={images.lumberjack.idle} alt="preload" />
+        {images.lumberjack.chopping.map((src, i) => <img key={`chop-${i}`} src={src} alt="preload" />)}
+        {images.lumberjack.sitting.map((src, i) => <img key={`sit-${i}`} src={src} alt="preload" />)}
       </div>
 
       <div className={`fixed top-24 left-1/2 -translate-x-1/2 z-[60] transition-all duration-500 ${toast.visible ? "translate-y-0 opacity-100" : "-translate-y-10 opacity-0"}`}>
         <div className="liquid-glass px-6 py-4 flex items-center gap-4 bg-white/60 shadow-xl">
-          {toast.type === "success" ? <ThumbsUp className="text-green-600"/> : toast.type === "error" ? <AlertTriangle className="text-red-600"/> : <Info className="text-blue-600"/>}
+          {toast.type === "success" ? <ThumbsUp className="text-green-600" /> : toast.type === "error" ? <AlertTriangle className="text-red-600" /> : <Info className="text-blue-600" />}
           <p className="text-sm font-bold text-gray-900">{toast.message}</p>
         </div>
       </div>
 
       {previewImageSrc && (
         <div className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4" onClick={() => setPreviewImageSrc(null)}>
-           <div className="relative max-w-3xl w-full max-h-full pop-in group" onClick={e => e.stopPropagation()}>
-               <button onClick={() => setPreviewImageSrc(null)} className="absolute -top-4 -right-4 bg-red-500 text-white p-2 rounded-full shadow-lg hover:bg-red-600 transition z-10"><X size={20}/></button>
-               <img src={previewImageSrc} alt="Evidencia Completa" className="w-full h-auto max-h-[80vh] object-contain rounded-2xl shadow-2xl border-2 border-white/50 bg-white" />
-           </div>
+          <div className="relative max-w-3xl w-full max-h-full pop-in group" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setPreviewImageSrc(null)} className="absolute -top-4 -right-4 bg-red-500 text-white p-2 rounded-full shadow-lg hover:bg-red-600 transition z-10"><X size={20} /></button>
+            <img src={previewImageSrc} alt="Evidencia Completa" className="w-full h-auto max-h-[80vh] object-contain rounded-2xl shadow-2xl border-2 border-white/50 bg-white" />
+          </div>
         </div>
       )}
 
+      {/* MODALS */}
       {isAddTaskModalOpen && (
         <div className="fixed inset-0 bg-black/20 backdrop-blur-md z-[60] flex items-center justify-center p-4">
           <div className="w-full max-w-md liquid-glass p-8 pop-in shadow-2xl border border-white/60">
@@ -670,8 +798,8 @@ function App() {
             <form onSubmit={handleAddTask} className="space-y-5">
               <div><label className="text-xs font-bold uppercase text-gray-600 mb-1 block">Actividad</label><input name="taskName" required className="w-full px-4 py-3 bg-white/40 border border-white/60 rounded-xl focus:outline-none focus:bg-white/80 focus:ring-2 focus:ring-indigo-500/50 transition font-medium" placeholder="Ej: Estudiar" /></div>
               <div><label className="text-xs font-bold uppercase text-gray-600 mb-1 block">Recompensa</label><input name="taskReward" type="number" required min="1" className="w-full px-4 py-3 bg-white/40 border border-white/60 rounded-xl focus:outline-none focus:bg-white/80 focus:ring-2 focus:ring-indigo-500/50 transition font-medium" placeholder="100" /></div>
-              <div><label className="text-xs font-bold uppercase text-gray-600 mb-1 block flex items-center gap-1"><Clock size={12}/> Límite</label><input name="taskDeadline" type="datetime-local" className="w-full px-4 py-3 bg-white/40 border border-white/60 rounded-xl focus:outline-none focus:bg-white/80 focus:ring-2 focus:ring-indigo-500/50 transition font-medium" /></div>
-              <div className="flex justify-end gap-3 pt-2"><button type="button" onClick={() => setIsAddTaskModalOpen(false)} className="px-5 py-2 text-sm font-bold text-gray-600 hover:bg-white/50 rounded-xl transition">Cancelar</button><button type="submit" className="px-5 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-lg flex items-center gap-2">Guardar <Sparkles size={16}/></button></div>
+              <div><label className="text-xs font-bold uppercase text-gray-600 mb-1 block flex items-center gap-1"><Clock size={12} /> Límite</label><input name="taskDeadline" type="datetime-local" className="w-full px-4 py-3 bg-white/40 border border-white/60 rounded-xl focus:outline-none focus:bg-white/80 focus:ring-2 focus:ring-indigo-500/50 transition font-medium" /></div>
+              <div className="flex justify-end gap-3 pt-2"><button type="button" onClick={() => setIsAddTaskModalOpen(false)} className="px-5 py-2 text-sm font-bold text-gray-600 hover:bg-white/50 rounded-xl transition">Cancelar</button><button type="submit" className="px-5 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-lg flex items-center gap-2">Guardar <Sparkles size={16} /></button></div>
             </form>
           </div>
         </div>
@@ -679,124 +807,111 @@ function App() {
 
       {isContactOpen && (
         <div className="fixed inset-0 bg-black/20 backdrop-blur-md z-[60] flex items-center justify-center p-4" onClick={() => setIsContactOpen(false)}>
-            <div className="w-full max-w-sm liquid-glass p-8 pop-in shadow-2xl border-t-4 border-indigo-500 text-center bg-white/70" onClick={e => e.stopPropagation()}>
-                <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4"><Mail size={32} className="text-indigo-600"/></div>
-                <h3 className="text-2xl font-black text-gray-800 mb-1">Equipo 6 YOTIP</h3>
-                <p className="text-sm text-gray-500 font-medium mb-6">Soporte y Desarrollo</p>
-                <div className="bg-white/50 p-4 rounded-xl border border-white/50 mb-6">
-                    <p className="text-indigo-600 font-bold flex items-center justify-center gap-2 text-sm"><MessageCircle size={16}/> soporte@yotip.com</p>
-                </div>
-                <button onClick={() => setIsContactOpen(false)} className="w-full py-3 bg-gray-800 text-white font-bold rounded-xl hover:bg-gray-900 transition">Cerrar</button>
-            </div>
+          <div className="w-full max-w-sm liquid-glass p-8 pop-in shadow-2xl border-t-4 border-indigo-500 text-center bg-white/70" onClick={e => e.stopPropagation()}>
+            <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4"><Mail size={32} className="text-indigo-600" /></div>
+            <h3 className="text-2xl font-black text-gray-800 mb-1">Equipo 6 YOTIP</h3>
+            <p className="text-sm text-gray-500 font-medium mb-6">Soporte y Desarrollo</p>
+            <button onClick={() => setIsContactOpen(false)} className="w-full py-3 bg-gray-800 text-white font-bold rounded-xl hover:bg-gray-900 transition">Cerrar</button>
+          </div>
         </div>
       )}
 
+      {usernameModalOpen && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="w-full max-w-md liquid-glass p-6 pop-in shadow-2xl border border-white/60" onClick={e => e.stopPropagation()}>
+            <h3 className="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2"><User className="text-indigo-600" /> Elige un nombre de usuario</h3>
+            <form onSubmit={handleUsernameSubmit} className="space-y-4">
+              <div>
+                <input autoFocus value={desiredUsername} onChange={(e) => setDesiredUsername(e.target.value)} placeholder="usuario_ejemplo" className="w-full px-4 py-3 rounded-xl bg-white/60 border border-white/50 focus:outline-none" />
+                {usernameError && <p className="text-xs text-red-500 mt-2">{usernameError}</p>}
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="submit" disabled={usernameChecking} className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold">{usernameChecking ? 'Guardando...' : 'Guardar nombre'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* DRAWERS & MENUS */}
       <aside className={`fixed inset-y-0 left-0 w-80 liquid-glass z-[50] p-6 m-4 transition-transform duration-500 ${storeDrawerOpen ? "translate-x-0" : "-translate-x-[150%]"}`}>
-        <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ShoppingCart className="text-indigo-600" /> Tienda</h3><button onClick={toggleStoreDrawer} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20}/></button></div>
-        <div className="p-5 rounded-2xl bg-gradient-to-br from-yellow-100/80 to-orange-100/80 border border-white/50 mb-6 shadow-sm backdrop-blur-sm"><p className="text-xs font-bold text-yellow-800 uppercase tracking-wide mb-1">Tu Saldo</p><p className="text-4xl font-black text-yellow-600 flex items-center gap-1 tracking-tighter">{coins}<DollarSign size={28}/></p></div>
+        <div className="flex justify-between items-center mb-8"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ShoppingCart className="text-indigo-600" /> Tienda</h3><button onClick={toggleStoreDrawer} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20} /></button></div>
+        <div className="p-5 rounded-2xl bg-gradient-to-br from-yellow-100/80 to-orange-100/80 border border-white/50 mb-6 shadow-sm backdrop-blur-sm"><p className="text-xs font-bold text-yellow-800 uppercase tracking-wide mb-1">Tu Saldo</p><p className="text-4xl font-black text-yellow-600 flex items-center gap-1 tracking-tighter">{coins}<DollarSign size={28} /></p></div>
         <div className="space-y-3 overflow-y-auto max-h-[60vh] pr-1">
           {storeItems.map((item, i) => (
-            <div key={i} className="liquid-glass-panel p-4 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center gap-2 mb-1">{item.lucideIcon && <item.lucideIcon size={18} className="text-gray-800"/>} <span className="font-bold text-gray-900">{item.name}</span></div><p className="text-[10px] text-gray-600 font-medium">{item.description}</p></div><button onClick={() => handleBuyItem(item)} className="ml-2 bg-white/80 text-indigo-700 border border-indigo-100 font-bold text-xs px-3 py-2 rounded-lg shadow-sm hover:bg-indigo-600 hover:text-white transition-all flex flex-col items-center min-w-[60px]"><span>${item.cost}</span></button></div>
+            <div key={i} className="liquid-glass-panel p-4 flex items-center justify-between group cursor-pointer"><div><div className="flex items-center gap-2 mb-1">{item.lucideIcon && <item.lucideIcon size={18} className="text-gray-800" />} <span className="font-bold text-gray-900">{item.name}</span></div><p className="text-[10px] text-gray-600 font-medium">{item.description}</p></div><button onClick={() => handleBuyItem(item)} className="ml-2 bg-white/80 text-indigo-700 border border-indigo-100 font-bold text-xs px-3 py-2 rounded-lg shadow-sm hover:bg-indigo-600 hover:text-white transition-all flex flex-col items-center min-w-[60px]"><span>${item.cost}</span></button></div>
           ))}
         </div>
       </aside>
 
       <aside className={`fixed inset-y-0 right-0 w-96 liquid-glass z-[50] p-6 m-4 transition-transform duration-500 flex flex-col ${activitiesDrawerOpen ? "translate-x-0" : "translate-x-[150%]"}`}>
-        <div className="flex justify-between items-center mb-8 shrink-0"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ListTodo className="text-indigo-600" /> Actividades</h3><button onClick={toggleActivitiesDrawer} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20}/></button></div>
+        <div className="flex justify-between items-center mb-8 shrink-0"><h3 className="text-2xl font-extrabold text-gray-900 flex items-center gap-2"><ListTodo className="text-indigo-600" /> Actividades</h3><button onClick={toggleActivitiesDrawer} className="p-2 hover:bg-black/5 rounded-full transition"><X size={20} /></button></div>
         <button onClick={() => { setIsAddTaskModalOpen(true); closeAllMenus(); }} className="w-full mb-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 transition transform active:scale-95 shrink-0"><Plus size={20} /> Crear Nueva Tarea</button>
-        
+
         <div className="space-y-3 overflow-y-auto flex-1 pr-1 min-h-0">
           {tasks.filter(t => !t.archived).map((task) => (
             <div key={task.id} className={`relative p-4 rounded-2xl border transition-all ${task.completed ? "bg-green-50/60 border-green-200/60 opacity-90" : task.inProgress ? "bg-slate-800 border-slate-600 text-white shadow-xl scale-[1.02]" : "liquid-glass-panel"}`}>
               <div className="flex justify-between items-start mb-3">
-                  <div className="w-full flex items-start justify-between gap-3">
-                        <div className="flex-1">
-                            <p className={`font-bold ${task.inProgress ? "text-white" : "text-gray-900"} ${task.completed && "line-through decoration-green-500/50"}`}>{task.name}</p>
-                            <p className={`text-xs font-bold ${task.inProgress ? "text-blue-300" : "text-indigo-600"} flex items-center mt-1`}>+{task.reward} Monedas</p>
-                            {task.deadline && !task.completed && (
-                                <div className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded-md bg-red-100/50 border border-red-200 text-[10px] font-bold text-red-600">
-                                    Expira: {new Date(task.deadline).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
-                                </div>
-                            )}
-                        </div>
-                        
-                        {task.completed && task.proofImage && (
-                            <div className="relative group cursor-pointer shrink-0" onClick={() => setPreviewImageSrc(task.proofImage)}>
-                                <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-xl overflow-hidden border-4 border-green-200/50 shadow-sm transition-transform group-hover:scale-105">
-                                    <img src={task.proofImage} alt="Proof" className="w-full h-full object-cover" />
-                                </div>
-                                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-xl"><Maximize2 size={24} className="text-white drop-shadow-lg"/></div>
-                            </div>
-                        )}
-                        {task.inProgress && !task.completed && <div className="animate-pulse bg-white/20 text-white p-1.5 rounded-lg shrink-0"><Zap size={14}/></div>}
+                <div className="w-full flex items-start justify-between gap-3">
+                  <div className="flex-1">
+                    <p className={`font-bold ${task.inProgress ? "text-white" : "text-gray-900"} ${task.completed && "line-through decoration-green-500/50"}`}>{task.name}</p>
+                    <p className={`text-xs font-bold ${task.inProgress ? "text-blue-300" : "text-indigo-600"} flex items-center mt-1`}>+{task.reward} Monedas</p>
+                    {task.deadline && !task.completed && (
+                      <div className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded-md bg-red-100/50 border border-red-200 text-[10px] font-bold text-red-600">Expira: {new Date(task.deadline).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                    )}
                   </div>
-              </div>
-              
-              <div className="flex gap-2 mt-2">
-                  {!task.completed ? (
-                    <>
-                        <button onClick={() => handleStartTask(task.id)} disabled={task.inProgress || isAnimating} className={`flex-1 py-2 border text-xs font-bold rounded-lg transition disabled:opacity-50 ${task.inProgress ? "bg-gray-700 border-gray-600 text-gray-400 cursor-not-allowed" : "bg-white/60 border-white text-gray-700 hover:bg-blue-50 hover:text-blue-700"}`}>{task.inProgress ? "En curso..." : "Iniciar"}</button>
-                        <button onClick={() => triggerFileUpload(task.id)} disabled={!task.inProgress || isAnimating} className={`flex-1 py-2 text-xs font-bold rounded-lg shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2 ${task.inProgress ? "bg-white text-gray-900 hover:bg-gray-200" : "bg-gray-300 text-gray-500 cursor-not-allowed"}`}><Upload size={14}/> ¡Hecho!</button>
-                    </>
-                  ) : (
-                    <div className="w-full py-1.5 text-center text-xs font-bold text-green-700 bg-green-100/50 border border-green-200 rounded-lg">¡Completada!</div>
+                  {task.completed && task.proofImage && (
+                    <div className="relative group cursor-pointer shrink-0" onClick={() => setPreviewImageSrc(task.proofImage ?? null)}>
+                      <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-xl overflow-hidden border-4 border-green-200/50 shadow-sm transition-transform group-hover:scale-105"><img src={task.proofImage} alt="Proof" className="w-full h-full object-cover" /></div>
+                    </div>
                   )}
+                  {task.inProgress && !task.completed && <div className="animate-pulse bg-white/20 text-white p-1.5 rounded-lg shrink-0"><Zap size={14} /></div>}
+                </div>
+              </div>
+              <div className="flex gap-2 mt-2">
+                {!task.completed ? (
+                  <>
+                    <button onClick={() => handleStartTask(task.id)} disabled={task.inProgress || isAnimating} className={`flex-1 py-2 border text-xs font-bold rounded-lg transition disabled:opacity-50 ${task.inProgress ? "bg-gray-700 border-gray-600 text-gray-400 cursor-not-allowed" : "bg-white/60 border-white text-gray-700 hover:bg-blue-50 hover:text-blue-700"}`}>{task.inProgress ? "En curso..." : "Iniciar"}</button>
+                    {/* BOTÓN REPARADO */}
+                    <button onClick={() => triggerFileUpload(task.id)} disabled={!task.inProgress} className={`flex-1 py-2 text-xs font-bold rounded-lg shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2 ${task.inProgress ? "bg-white text-gray-900 hover:bg-gray-200" : "bg-gray-300 text-gray-500 cursor-not-allowed"}`}><Upload size={14} /> ¡Hecho!</button>
+                  </>
+                ) : (<div className="w-full py-1.5 text-center text-xs font-bold text-green-700 bg-green-100/50 border border-green-200 rounded-lg">¡Completada!</div>)}
               </div>
             </div>
           ))}
         </div>
-
         <div className="mt-4 pt-4 border-t border-gray-200/30 shrink-0">
-            <button
-                onClick={handleDeleteAllTasks}
-                className={`w-full py-3 font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all duration-300 ${
-                    isResetConfirming
-                        ? "bg-red-500 text-white hover:bg-red-600 animate-pulse"
-                        : "bg-gray-200 text-gray-600 hover:bg-gray-300"
-                }`}
-            >
-                <Trash2 size={18} className={isResetConfirming ? "animate-bounce" : ""}/>
-                {isResetConfirming ? "¿Seguro? Click para confirmar" : "Eliminar todas las tareas"}
-            </button>
+          <button onClick={handleDeleteAllTasks} className={`w-full py-3 font-bold rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all duration-300 ${isResetConfirming ? "bg-red-500 text-white hover:bg-red-600 animate-pulse" : "bg-gray-200 text-gray-600 hover:bg-gray-300"}`}>
+            <Trash2 size={18} className={isResetConfirming ? "animate-bounce" : ""} />{isResetConfirming ? "¿Seguro? Click para confirmar" : "Eliminar todas las tareas"}
+          </button>
         </div>
       </aside>
 
-      <header 
-        className={`fixed top-6 left-1/2 -translate-x-1/2 w-[95%] sm:w-[90%] max-w-5xl z-[50] pointer-events-auto transition-transform duration-300 ease-in-out ${isAnyMenuOpen ? '-translate-y-[150%]' : 'translate-y-0'}`}
-      >
+      <header className={`fixed top-6 left-1/2 -translate-x-1/2 w-[95%] sm:w-[90%] max-w-5xl z-[50] pointer-events-auto transition-transform duration-300 ease-in-out ${isAnyMenuOpen ? '-translate-y-[150%]' : 'translate-y-0'}`}>
         <div className="liquid-glass px-3 sm:px-6 py-3 flex justify-between items-center shadow-xl">
           <div className="flex items-center gap-2 sm:gap-4">
-            <div className="bg-gradient-to-tr from-indigo-600 to-purple-500 text-white p-2 rounded-lg shadow-lg shadow-indigo-500/30"><BarChart4 size={20}/></div>
+            <div className="bg-gradient-to-tr from-indigo-600 to-purple-500 text-white p-2 rounded-lg shadow-lg shadow-indigo-500/30"><BarChart4 size={20} /></div>
             <div><h1 className="hidden sm:block text-lg font-black text-gray-900 tracking-tight leading-none">YOTIP</h1><span className="text-[8px] font-bold text-indigo-500 uppercase tracking-widest hidden sm:block">Your Time Your Productivity</span></div>
-            {/* BOTÓN DE DATOS (SOLO ESCRITORIO) */}
             <button onClick={toggleTycoonPanel} className="hidden sm:block ml-2 text-xs font-bold text-gray-600 hover:text-indigo-700 bg-white/40 px-3 py-1.5 rounded-lg transition border border-white/50 hover:bg-white/80">Datos</button>
           </div>
-          
           <nav className="flex items-center gap-1 sm:gap-3">
-            <button onClick={toggleStoreDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-2 sm:px-3 py-2 rounded-xl hover:bg-white/50 transition"><ShoppingCart size={18}/> <span className="hidden sm:inline">Tienda</span></button>
-            <button onClick={toggleActivitiesDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-2 sm:px-3 py-2 rounded-xl hover:bg-white/50 transition"><ListTodo size={18}/> <span className="hidden sm:inline">Tareas</span></button>
+            <button onClick={toggleStoreDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-2 sm:px-3 py-2 rounded-xl hover:bg-white/50 transition"><ShoppingCart size={18} /> <span className="hidden sm:inline">Tienda</span></button>
+            <button onClick={toggleActivitiesDrawer} className="flex items-center gap-1 text-xs font-bold text-gray-700 hover:text-indigo-700 px-2 sm:px-3 py-2 rounded-xl hover:bg-white/50 transition"><ListTodo size={18} /> <span className="hidden sm:inline">Tareas</span></button>
             <div className="h-6 w-[1px] bg-gray-400/30 mx-1 sm:mx-2"></div>
-            
-            <div className="flex items-center justify-center gap-1 bg-yellow-100/50 border border-yellow-200/50 px-2 sm:px-3 py-1.5 rounded-xl backdrop-blur-sm min-w-[80px] whitespace-nowrap">
-                <span className="font-black text-yellow-700 text-sm">{coins}</span><DollarSign size={14} className="text-yellow-600"/>
-            </div>
-            
-            {/* BOTÓN DE DATOS (SOLO MÓVIL) */}
-            <button onClick={toggleTycoonPanel} className="sm:hidden p-2 text-gray-500 hover:text-indigo-700 transition"><BarChart4 size={20}/></button>
-
-            <button onClick={toggleConfig} className="p-2 text-gray-500 hover:text-indigo-700 transition hover:rotate-90 duration-300"><Settings size={20}/></button>
-            <button onClick={handleLogout} className="p-2 text-red-400 hover:text-red-600 bg-red-50/50 rounded-lg transition"><LogOut size={18}/></button>
+            <div className="flex items-center justify-center gap-1 bg-yellow-100/50 border border-yellow-200/50 px-2 sm:px-3 py-1.5 rounded-xl backdrop-blur-sm min-w-[80px] whitespace-nowrap"><span className="font-black text-yellow-700 text-sm">{coins}</span><DollarSign size={14} className="text-yellow-600" /></div>
+            <button onClick={toggleTycoonPanel} className="sm:hidden p-2 text-gray-500 hover:text-indigo-700 transition"><BarChart4 size={20} /></button>
+            <button onClick={toggleConfig} className="p-2 text-gray-500 hover:text-indigo-700 transition hover:rotate-90 duration-300"><Settings size={20} /></button>
+            <button onClick={handleLogout} className="p-2 text-red-400 hover:text-red-600 bg-red-50/50 rounded-lg transition"><LogOut size={18} /></button>
           </nav>
-
           {configDropdownOpen && (
             <div className="absolute top-full right-0 mt-4 w-64 liquid-glass p-5 shadow-2xl pop-in z-50">
               <p className="text-xs font-bold text-gray-500 uppercase mb-3 tracking-wider">Tema de color</p>
               <div className="flex gap-3 mb-4 justify-between">
-                {['indigo','pink','teal','yellow'].map(c => (
+                {['indigo', 'pink', 'teal', 'yellow'].map(c => (
                   <button key={c} onClick={() => changeThemeColor(c)} style={{ backgroundColor: c === 'indigo' ? '#4f46e5' : c === 'pink' ? '#ec4899' : c === 'teal' ? '#0d9488' : '#ca8a04' }} className={`w-10 h-10 rounded-full shadow-lg border-2 border-white ring-2 ring-transparent hover:scale-110 transition`}></button>
                 ))}
               </div>
-              <div className="flex items-center justify-between pt-3 border-t border-gray-400/20"><span className="text-xs font-bold text-gray-600">Personalizado</span><div className="color-circle-wrapper"><input type="color" onChange={(e) => changeThemeColor(e.target.value)} className="color-input-fix"/></div></div>
+              <div className="flex items-center justify-between pt-3 border-t border-gray-400/20"><span className="text-xs font-bold text-gray-600">Personalizado</span><div className="color-circle-wrapper"><input type="color" onChange={(e) => changeThemeColor(e.target.value)} className="color-input-fix" /></div></div>
             </div>
           )}
         </div>
@@ -805,146 +920,109 @@ function App() {
       {tycoonPanelOpen && (
         <div className="fixed inset-0 z-[60] pt-10 px-4 bg-black/10 backdrop-blur-sm transition-all flex items-center justify-center" onClick={() => setTycoonPanelOpen(false)}>
           <div className="w-full max-w-6xl liquid-glass p-8 pop-in shadow-2xl border-t-4 border-indigo-500 bg-white/80 h-[85vh] flex flex-col relative" onClick={(e) => e.stopPropagation()}>
-             
-             <button onClick={() => setTycoonPanelOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 rounded-full hover:bg-gray-200"><X size={24}/></button>
-
-             <h2 className="text-3xl font-black text-gray-800 mb-6 flex items-center gap-2"><Activity className="text-indigo-600"/> Actividad de {currentUser}</h2>
-             
-             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 mb-6 overflow-y-auto min-h-0">
-                 <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col h-64 lg:h-auto">
-                     <h4 className="font-bold text-gray-600 mb-4">Actividad Semanal</h4>
-                     <div className="flex-1 flex items-end justify-between gap-2 pb-4 relative"><LineChart /></div>
-                     <div className="flex justify-between text-xs text-gray-400 font-bold px-2"><span>Lun</span><span>Mar</span><span>Mie</span><span>Jue</span><span>Vie</span><span>Sab</span><span>Dom</span></div>
-                 </div>
-                 <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col items-center justify-center h-64 lg:h-auto">
-                      <h4 className="font-bold text-gray-600 mb-4 w-full text-left">Estado de Tareas</h4>
-                      <DonutChart tasks={tasks} />
-                 </div>
-             </div>
-
-             <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner overflow-hidden flex-1 flex flex-col min-h-[200px]">
-                 <div className="grid grid-cols-5 gap-4 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-300/50 pb-3 mb-2">
-                     <div className="flex items-center gap-1"><Calendar size={14}/> Fecha</div>
-                     <div className="flex items-center gap-1 col-span-2">Nombre</div>
-                     <div className="flex items-center gap-1">Progreso</div>
-                     <div className="flex items-center gap-1 text-right justify-end">Dificultad</div>
-                 </div>
-                 <div className="overflow-y-auto pr-2 space-y-2 flex-1">
-                     {tasks.map(t => {
-                        let starCount = Math.min(5, Math.max(1, Math.floor(t.reward / 100)));
-                        if (t.reward >= 500) starCount = 5;
-                        const isMaxLevel = t.reward >= 1000;
-                        const starColor = isMaxLevel ? "text-purple-600" : "text-yellow-400";
-                        return (
-                         <div key={t.id} className={`grid grid-cols-5 gap-4 items-center py-3 border-b border-gray-200/30 hover:bg-white/40 transition rounded-lg px-2 ${t.archived ? 'opacity-50 grayscale' : ''}`}>
-                             <div className="text-xs font-bold text-gray-600">{t.deadline ? new Date(t.deadline).toLocaleDateString() : "Hoy"}</div>
-                             <div className="col-span-2 font-bold text-gray-800 truncate flex items-center gap-2">
-                                {t.proofImage && <ImageIcon size={14} className="text-indigo-500"/>} 
-                                {t.name} 
-                                <span className="text-[10px] text-indigo-400 font-normal block">{currentUser} {t.archived && "(Archivado)"}</span>
-                             </div>
-                             <div>
-                                 <div className="flex items-center gap-2">
-                                     <span className="text-xs font-bold">{t.completed ? "100%" : t.inProgress ? "50%" : "0%"}</span>
-                                     <div className={`w-3 h-3 rounded-full ${t.completed ? "bg-green-500" : t.inProgress ? "bg-blue-500" : "bg-gray-300"}`}></div>
-                                 </div>
-                             </div>
-                             <div className={`flex justify-end gap-0.5 ${starColor}`}>
-                                 {[...Array(starCount)].map((_, i) => <Star key={i} size={12} fill="currentColor" />)}
-                             </div>
-                         </div>
-                     )})}
-                     {tasks.length === 0 && <p className="text-center text-gray-400 py-4 italic text-sm">No hay actividad registrada.</p>}
-                 </div>
-             </div>
+            <button onClick={() => setTycoonPanelOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 rounded-full hover:bg-gray-200"><X size={24} /></button>
+            <h2 className="text-3xl font-black text-gray-800 mb-6 flex items-center gap-2"><Activity className="text-indigo-600" /> Actividad de {username || currentUser}</h2>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1 mb-6 overflow-y-auto min-h-0">
+              <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col h-64 lg:h-auto">
+                <h4 className="font-bold text-gray-600 mb-4">Actividad Semanal</h4>
+                <div className="flex-1 flex items-end justify-between gap-2 pb-4 relative"><LineChart /></div>
+                <div className="flex justify-between text-xs text-gray-400 font-bold px-2"><span>Lun</span><span>Mar</span><span>Mie</span><span>Jue</span><span>Vie</span><span>Sab</span><span>Dom</span></div>
+              </div>
+              <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner flex flex-col items-center justify-center h-64 lg:h-auto">
+                <h4 className="font-bold text-gray-600 mb-4 w-full text-left">Estado de Tareas</h4>
+                <DonutChart tasks={tasks} />
+              </div>
+            </div>
+            <div className="bg-white/50 rounded-3xl p-6 border border-white/50 shadow-inner overflow-hidden flex-1 flex flex-col min-h-[200px]">
+              <div className="grid grid-cols-5 gap-4 text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-300/50 pb-3 mb-2">
+                <div className="flex items-center gap-1"><Calendar size={14} /> Fecha</div>
+                <div className="flex items-center gap-1 col-span-2">Nombre</div>
+                <div className="flex items-center gap-1">Progreso</div>
+                <div className="flex items-center gap-1 text-right justify-end">Dificultad</div>
+              </div>
+              <div className="overflow-y-auto pr-2 space-y-2 flex-1">
+                {tasks.map(t => {
+                  let starCount = Math.min(5, Math.max(1, Math.floor(t.reward / 100)));
+                  if (t.reward >= 500) starCount = 5;
+                  const isMaxLevel = t.reward >= 1000;
+                  const starColor = isMaxLevel ? "text-purple-600" : "text-yellow-400";
+                  return (
+                    <div key={t.id} className={`grid grid-cols-5 gap-4 items-center py-3 border-b border-gray-200/30 hover:bg-white/40 transition rounded-lg px-2 ${t.archived ? 'opacity-50 grayscale' : ''}`}>
+                      <div className="text-xs font-bold text-gray-600">{t.deadline ? new Date(t.deadline).toLocaleDateString() : "Hoy"}</div>
+                      <div className="col-span-2 font-bold text-gray-800 truncate flex items-center gap-2">
+                        {t.proofImage && <ImageIcon size={14} className="text-indigo-500" />}
+                        {t.name}
+                        <span className="text-[10px] text-indigo-400 font-normal block">{currentUser} {t.archived && "(Archivado)"}</span>
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold">{t.completed ? "100%" : t.inProgress ? "50%" : "0%"}</span>
+                          <div className={`w-3 h-3 rounded-full ${t.completed ? "bg-green-500" : t.inProgress ? "bg-blue-500" : "bg-gray-300"}`}></div>
+                        </div>
+                      </div>
+                      <div className={`flex justify-end gap-0.5 ${starColor}`}>{[...Array(starCount)].map((_, i) => <Star key={i} size={12} fill="currentColor" />)}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
           </div>
         </div>
       )}
 
-      <div 
-          className={`fixed bottom-0 left-1/2 -translate-x-1/2 w-[95%] sm:w-[90%] max-w-3xl z-[30] transition-transform duration-500 cubic-bezier(0.4, 0, 0.2, 1) cursor-pointer ${isBannerExpanded ? 'translate-y-[-20px]' : 'translate-y-[72%]'}`}
-          onClick={() => setIsBannerExpanded(!isBannerExpanded)}
-      >
-          <div className="liquid-glass px-6 pb-6 pt-3 shadow-2xl border-t border-white/70 bg-white/60 hover:bg-white/70 transition-colors">
-              <div className="w-16 h-1.5 bg-gray-300 rounded-full mx-auto mb-4 opacity-60"></div>
-              <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-3">
-                      <div className="p-2 bg-indigo-100 text-indigo-600 rounded-full"><HelpCircle size={20}/></div>
-                      <div><p className="text-sm font-bold text-gray-800">Centro de Ayuda</p><p className="text-xs text-gray-500">Guía rápida y soporte</p></div>
-                  </div>
-                  <div className="transform transition-transform duration-500" style={{transform: isBannerExpanded ? 'rotate(180deg)' : 'rotate(0deg)'}}><ChevronUp size={20} className="text-gray-400"/></div>
-              </div>
-              <div className="mt-6 pt-6 border-t border-gray-200/50 flex justify-between items-center opacity-90">
-                  <div className="text-xs text-gray-600 space-y-1">
-                      <p><strong>1.</strong> Inicia tareas para activar al leñador.</p>
-                      <p><strong>2.</strong> Sube tu evidencia antes de que expire.</p>
-                      <p><strong>3.</strong> ¡Cuidado! Si expira pierdes monedas.</p>
-                  </div>
-                  <button onClick={(e) => { e.stopPropagation(); setIsContactOpen(true); }} className="bg-indigo-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 transition flex items-center gap-2">Soporte <Mail size={14}/></button>
-              </div>
+      <div className={`fixed bottom-0 left-1/2 -translate-x-1/2 w-[95%] sm:w-[90%] max-w-3xl z-[30] transition-transform duration-500 cubic-bezier(0.4, 0, 0.2, 1) cursor-pointer ${isBannerExpanded ? 'translate-y-[-20px]' : 'translate-y-[72%]'}`} onClick={() => setIsBannerExpanded(!isBannerExpanded)}>
+        <div className="liquid-glass px-6 pb-6 pt-3 shadow-2xl border-t border-white/70 bg-white/60 hover:bg-white/70 transition-colors">
+          <div className="w-16 h-1.5 bg-gray-300 rounded-full mx-auto mb-4 opacity-60"></div>
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-indigo-100 text-indigo-600 rounded-full"><HelpCircle size={20} /></div>
+              <div><p className="text-sm font-bold text-gray-800">Centro de Ayuda</p><p className="text-xs text-gray-500">Guía rápida y soporte</p></div>
+            </div>
+            <div className="transform transition-transform duration-500" style={{ transform: isBannerExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}><ChevronUp size={20} className="text-gray-400" /></div>
           </div>
+          <div className="mt-6 pt-6 border-t border-gray-200/50 flex justify-between items-center opacity-90">
+            <div className="text-xs text-gray-600 space-y-1"><p><strong>1.</strong> Inicia tareas para activar al leñador.</p><p><strong>2.</strong> Sube tu evidencia antes de que expire.</p><p><strong>3.</strong> ¡Cuidado! Si expira pierdes monedas.</p></div>
+            <button onClick={(e) => { e.stopPropagation(); setIsContactOpen(true); }} className="bg-indigo-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-500/30 hover:bg-indigo-700 transition flex items-center gap-2">Soporte <Mail size={14} /></button>
+          </div>
+        </div>
       </div>
 
-      <main 
-        className="pt-0 pb-0 min-h-screen w-full h-screen overflow-hidden relative flex items-center justify-center bg-gradient-to-t from-indigo-900/20 to-transparent"
-        ref={containerRef}
-        onTouchStart={handleContainerTouchStart}
-        onTouchMove={handleContainerTouchMove}
-        style={{ touchAction: 'none' }}
-      >
-        <div 
-            style={{ 
-                // IMPORTANTE: La transformación de pan/zoom SOLO se aplica si es móvil (isMobile es true)
-                transform: isMobile ? `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})` : 'none',
-                transformOrigin: 'center center',
-                transition: isDragging ? 'none' : 'transform 0.1s ease-out'
-            }}
-            className="w-full flex items-center justify-center pointer-events-auto"
-        >
-            {/* CLASES HÍBRIDAS:
-                Móvil: w-[1600px] h-[1000px] (Gigante fijo)
-                Escritorio (md:): w-full h-auto aspect-video (Responsivo original)
-            */}
-            <div ref={parcelaRef} className="relative transition-all duration-500 md:w-full md:max-w-6xl md:aspect-video md:h-auto w-[1600px] h-[1000px] liquid-glass p-0 shadow-2xl group overflow-hidden shrink-0">
-                <div className="absolute inset-0 bg-no-repeat bg-center opacity-90" style={{ backgroundImage: `url(${images.parcela})`, backgroundSize: 'cover' }}></div>
-                <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/10 to-transparent pointer-events-none"></div>
+      <main className="pt-0 pb-0 min-h-screen w-full h-screen overflow-hidden relative flex items-center justify-center bg-gradient-to-t from-indigo-900/20 to-transparent" ref={containerRef} onTouchStart={handleContainerTouchStart} onTouchMove={handleContainerTouchMove} style={{ touchAction: 'none' }}>
+        <div style={{ transform: isMobile ? `translate(${viewTransform.x}px, ${viewTransform.y}px) scale(${viewTransform.scale})` : 'none', transformOrigin: 'center center', transition: isDragging ? 'none' : 'transform 0.1s ease-out' }} className="w-full flex items-center justify-center pointer-events-auto">
+          <div ref={parcelaRef} className="relative transition-all duration-500 md:w-full md:max-w-6xl md:aspect-video md:h-auto w-[1600px] h-[1000px] liquid-glass p-0 shadow-2xl group overflow-hidden shrink-0">
+            <div className="absolute inset-0 bg-no-repeat bg-center opacity-90" style={{ backgroundImage: `url(${images.parcela})`, backgroundSize: 'cover' }}></div>
+            <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/10 to-transparent pointer-events-none"></div>
 
-                {parcelaObjects.length === 0 && animationState === "idle" && (
-                    <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none"><div className="liquid-glass px-8 py-6 text-center animate-pulse bg-white/60"><Home size={48} className="mx-auto text-indigo-600 mb-2 opacity-80"/><h2 className="text-xl font-black text-gray-800">Parcela Vacía</h2><p className="text-sm text-gray-600 font-medium">Ve a la tienda y comienza a decorar</p></div></div>
-                )}
+            {parcelaObjects.length === 0 && animationState === "idle" && (
+              <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none"><div className="liquid-glass px-8 py-6 text-center animate-pulse bg-white/60"><Home size={48} className="mx-auto text-indigo-600 mb-2 opacity-80" /><h2 className="text-xl font-black text-gray-800">Parcela Vacía</h2><p className="text-sm text-gray-600 font-medium">Ve a la tienda y comienza a decorar</p></div></div>
+            )}
 
-                <div className="absolute bottom-[10%] left-1/2 -translate-x-1/2 z-20 pointer-events-none transition-all duration-500">
-                    <div className="relative">
-                        <img key={getLumberjackImage()} src={getLumberjackImage()} alt="Leñador" className="h-32 object-contain drop-shadow-2xl" style={{ imageRendering: "pixelated" }} />
-                        <div className="absolute -top-14 left-1/2 -translate-x-1/2 bg-white/80 backdrop-blur px-4 py-1 rounded-xl shadow-lg border-2 border-white transform hover:scale-110 transition flex flex-col items-center">
-                            <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Jugador</span>
-                            <span className="text-sm font-black text-gray-800 leading-none pb-1">{currentUser}</span>
-                        </div>
-                        <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur px-3 py-1 rounded-full shadow-lg text-[10px] font-bold text-white whitespace-nowrap flex items-center gap-1 border border-white/20">
-                            {animationState === "idle" && <>💤 Esperando...</>}{animationState === "chopping" && <><Zap size={10} className="text-yellow-400"/> Trabajando</>}{animationState === "sitting" && <><Sparkles size={10} className="text-indigo-300"/> Descansando</>}
-                        </div>
-                    </div>
+            <div className="absolute bottom-[10%] left-1/2 -translate-x-1/2 z-20 pointer-events-none transition-all duration-500">
+              <div className="relative">
+                <img key={getLumberjackImage()} src={getLumberjackImage()} alt="Leñador" className="h-32 object-contain drop-shadow-2xl" style={{ imageRendering: "pixelated" }} />
+                <div className="absolute -top-14 left-1/2 -translate-x-1/2 bg-white/80 backdrop-blur px-4 py-1 rounded-xl shadow-lg border-2 border-white transform hover:scale-110 transition flex flex-col items-center">
+                  <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Jugador</span>
+                  <span className="text-sm font-black text-gray-800 leading-none pb-1">{username || currentUser}</span>
                 </div>
-
-                {parcelaObjects.map((obj) => (
-                    <div 
-                        key={obj.id}
-                        className={`absolute transition-transform active:scale-95 ${isDragging && draggedObjectId === obj.id ? "z-50 cursor-grabbing scale-110" : "z-10 cursor-grab hover:z-20"}`}
-                        style={{ top: `${obj.position.top}%`, left: `${obj.position.left}%`, transform: 'translate(-50%, -50%)' }}
-                        onMouseDown={(e) => handleDragStart(e, obj.id, obj.position)}
-                        onTouchStart={(e) => handleDragStart(e, obj.id, obj.position)}
-                    >
-                        <div className="relative group/obj">
-                            <img src={images.objects[obj.objectId]} className={`${obj.objectId === "casa" ? "h-48 drop-shadow-2xl" : "h-20 drop-shadow-xl"} object-contain transition filter group-hover/obj:brightness-110`} style={{ imageRendering: "pixelated" }} draggable="false" />
-                            {!isDragging && (
-                                <div className="absolute -top-8 left-1/2 -translate-x-1/2 flex gap-1 opacity-0 group-hover/obj:opacity-100 transition-all transform translate-y-2 group-hover/obj:translate-y-0">
-                                    <button onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()} onClick={(e) => {e.stopPropagation(); removeParcelaObject(obj.id)}} className="bg-red-500 text-white p-1.5 rounded-full shadow-lg hover:bg-red-600 transition border-2 border-white"><X size={12}/></button>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                ))}
+                <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur px-3 py-1 rounded-full shadow-lg text-[10px] font-bold text-white whitespace-nowrap flex items-center gap-1 border border-white/20">
+                  {animationState === "idle" && <>💤 Esperando...</>}{animationState === "chopping" && <><Zap size={10} className="text-yellow-400" /> Trabajando</>}{animationState === "sitting" && <><Sparkles size={10} className="text-indigo-300" /> Descansando</>}
+                </div>
+              </div>
             </div>
+
+            {parcelaObjects.map((obj) => (
+              <div key={obj.id} className={`absolute transition-transform active:scale-95 ${isDragging && draggedObjectId === obj.id ? "z-50 cursor-grabbing scale-110" : "z-10 cursor-grab hover:z-20"}`} style={{ top: `${obj.position.top}%`, left: `${obj.position.left}%`, transform: 'translate(-50%, -50%)' }} onMouseDown={(e) => handleDragStart(e, obj.id, obj.position)} onTouchStart={(e) => handleDragStart(e, obj.id, obj.position)}>
+                <div className="relative group/obj">
+                  <img src={(images.objects as any)[obj.objectId]} className={`${obj.objectId === "casa" ? "h-48 drop-shadow-2xl" : "h-20 drop-shadow-xl"} object-contain transition filter group-hover/obj:brightness-110`} style={{ imageRendering: "pixelated" }} draggable="false" />
+                  {!isDragging && (
+                    <div className="absolute -top-8 left-1/2 -translate-x-1/2 flex gap-1 opacity-0 group-hover/obj:opacity-100 transition-all transform translate-y-2 group-hover/obj:translate-y-0">
+                      <button onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); removeParcelaObject(obj.id) }} className="bg-red-500 text-white p-1.5 rounded-full shadow-lg hover:bg-red-600 transition border-2 border-white"><X size={12} /></button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </main>
     </div>
