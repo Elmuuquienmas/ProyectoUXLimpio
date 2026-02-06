@@ -9,7 +9,7 @@ console.log("🔍 [DEBUG] URL Leída:", rawUrl ? `'${rawUrl}'` : 'UNDEFINED');
 console.log("🔍 [DEBUG] Key Leída:", rawKey ? 'PRESENTE (Oculta)' : 'FALTA');
 
 let supabaseUrl = rawUrl;
-const supabaseAnonKey = rawKey;
+let supabaseAnonKey = rawKey;
 
 if (!supabaseUrl || !supabaseAnonKey) {
     console.error("🚨 [ERROR] Faltan variables de entorno. LA APP NO FUNCIONARÁ.");
@@ -17,6 +17,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
     // 1. Limpiar: Quitamos espacios y comillas accidentales que a veces se copian del .env
     const originalUrl = supabaseUrl;
     supabaseUrl = supabaseUrl.trim().replace(/^["']|["']$/g, '');
+    supabaseAnonKey = supabaseAnonKey.trim().replace(/^["']|["']$/g, '');
 
     if (originalUrl !== supabaseUrl) {
         console.warn("⚠️ [DEBUG] Se detectaron y eliminaron comillas o espacios en la URL.");

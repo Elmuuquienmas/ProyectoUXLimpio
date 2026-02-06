@@ -20,6 +20,7 @@ export function useAuth() {
       await signInWithEmail(email, pass);
       return true;
     } catch (err: any) {
+      console.error("❌ Login Error Full:", err);
       setLoginError(err.message || "Error al entrar");
       return false;
     } finally {
@@ -34,6 +35,7 @@ export function useAuth() {
       await signUpWithEmail(email, pass);
       return true;
     } catch (err: any) {
+      console.error("❌ Signup Error Full:", err);
       setLoginError(err.message);
       return false;
     } finally {
