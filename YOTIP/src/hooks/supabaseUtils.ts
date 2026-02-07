@@ -37,8 +37,9 @@ export const getUserData = async (userId: string) => {
   if (error) {
     // Si no existe, retornamos null para que la App sepa que debe inicializarlo
     if (error.code === 'PGRST116') {
-      console.warn("⚠️ Usuario nuevo (sin datos en DB).");
-      return null;
+      if (error.code === 'PGRST116') {
+        return null;
+      }
     }
     throw error;
   }
@@ -55,14 +56,14 @@ export const getUserData = async (userId: string) => {
 };
 
 export const saveUserData = async (userId: string, dataToSave: any) => {
-  const updates: any = { 
+  const updates: any = {
     id: userId,
-    updated_at: new Date() 
+    updated_at: new Date()
   };
 
   if (dataToSave.username) updates.username = dataToSave.username;
   if (dataToSave.theme) updates.theme = dataToSave.theme;
-  
+
   // CORRECCIÓN: Quitamos la validación estricta de 'number' por si acaso
   if (dataToSave.coins !== undefined) {
     updates.coins = parseInt(dataToSave.coins); // Aseguramos que sea entero
@@ -77,24 +78,19 @@ export const saveUserData = async (userId: string, dataToSave: any) => {
       .maybeSingle();
 
     const currentJSON = currentProfile?.game_data || { objects: [], tasks: [] };
-    
+
     updates.game_data = {
       objects: dataToSave.objects !== undefined ? dataToSave.objects : currentJSON.objects,
       tasks: dataToSave.tasks !== undefined ? dataToSave.tasks : currentJSON.tasks
     };
   }
 
-  console.log("💾 Intentando guardar en DB:", updates);
-
   const { error } = await supabase
     .from('profiles')
     .upsert(updates);
 
   if (error) {
-    console.error("❌ Error guardando en Supabase:", error);
     throw error;
-  } else {
-    console.log("✅ Guardado exitoso.");
   }
 };
 

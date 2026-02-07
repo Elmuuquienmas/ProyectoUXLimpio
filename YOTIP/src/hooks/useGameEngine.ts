@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { getUserData, saveUserData } from './supabaseUtils'; 
+import { getUserData, saveUserData } from './supabaseUtils';
 import type { Task, ParcelaObject, StoreItem } from '../types';
 
 const DEFAULT_TASKS: Task[] = [
@@ -21,7 +21,7 @@ export function useGameEngine(currentUser: string | null) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [username, setUsername] = useState<string | null>(null);
   const [theme, setTheme] = useState<string>('indigo');
-  
+
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showUsernameModal, setShowUsernameModal] = useState(false);
@@ -45,7 +45,6 @@ export function useGameEngine(currentUser: string | null) {
         let finalData: any = null;
 
         if (localBackup) {
-          console.warn("⚠️ ¡Respaldo local encontrado! Usando datos no subidos...");
           finalData = JSON.parse(localBackup);
         } else {
           // B) Si no hay respaldo, bajamos de la nube
@@ -58,27 +57,27 @@ export function useGameEngine(currentUser: string | null) {
           // --- CARGAMOS DATOS ---
           setCoins(finalData.coins ?? 0);
           setParcelaObjects(finalData.objects || []);
-          const dbTasks = finalData.tasks; 
+          const dbTasks = finalData.tasks;
           setTasks((dbTasks && dbTasks.length > 0) ? dbTasks : DEFAULT_TASKS);
           setUsername(finalData.username || null);
           setTheme(finalData.theme || 'indigo');
           if (!finalData.username) setShowUsernameModal(true);
-          
-          setIsDataLoaded(true); 
+
+          setIsDataLoaded(true);
 
           // Si usamos el backup local, intentamos subirlo a la nube ahora mismo
           if (localBackup) {
-             smartSave(finalData);
+            smartSave(finalData);
           }
 
         } else {
           // --- USUARIO NUEVO ---
-          setTasks(DEFAULT_TASKS); setCoins(0); setParcelaObjects([]); setShowUsernameModal(true); setIsDataLoaded(true); 
+          setTasks(DEFAULT_TASKS); setCoins(0); setParcelaObjects([]); setShowUsernameModal(true); setIsDataLoaded(true);
           saveUserData(currentUser!, { coins: 0, objects: [], tasks: DEFAULT_TASKS }).catch(console.error);
         }
       } catch (e) {
         console.error("Error cargando:", e);
-        setIsDataLoaded(true); 
+        setIsDataLoaded(true);
       }
     }
     load();
@@ -107,14 +106,13 @@ export function useGameEngine(currentUser: string | null) {
       await saveUserData(currentUser, fullData);
 
       // 4. ÉXITO: BORRA EL RESPALDO LOCAL (Como pediste)
+      // 4. ÉXITO: BORRA EL RESPALDO LOCAL (Como pediste)
       localStorage.removeItem(`unsaved_${currentUser}`);
-      console.log("✅ Datos sincronizados, respaldo local borrado.");
 
-    } catch (e) { 
-      console.error("❌ Falló la subida, pero el respaldo local está seguro.", e);
+    } catch (e) {
       // No borramos el localStorage, así la próxima vez que entre, se recupera.
-    } finally { 
-      setTimeout(() => setIsSaving(false), 500); 
+    } finally {
+      setTimeout(() => setIsSaving(false), 500);
     }
   };
 
@@ -122,9 +120,9 @@ export function useGameEngine(currentUser: string | null) {
   const buyItem = (item: StoreItem) => {
     if (coins < item.cost) return false;
     const newCoins = coins - item.cost;
-    const newObj: ParcelaObject = { 
-        id: Date.now() + Math.random(), name: item.name, objectId: item.objectId || '', 
-        cost: item.cost, position: { top: 50, left: 50 } 
+    const newObj: ParcelaObject = {
+      id: Date.now() + Math.random(), name: item.name, objectId: item.objectId || '',
+      cost: item.cost, position: { top: 50, left: 50 }
     };
     const newObjects = [...parcelaObjects, newObj];
     setCoins(newCoins);
@@ -136,11 +134,11 @@ export function useGameEngine(currentUser: string | null) {
   const updateObjectsVisual = (newObjects: ParcelaObject[]) => setParcelaObjects(newObjects);
 
   const completeTask = (taskId: number, reward: number, proofImage: string) => {
-     const newTasks = tasks.map(t => t.id === taskId ? { ...t, completed: true, inProgress: false, proofImage } : t);
-     const newCoins = coins + reward;
-     setTasks(newTasks);
-     setCoins(newCoins);
-     smartSave({ tasks: newTasks, coins: newCoins });
+    const newTasks = tasks.map(t => t.id === taskId ? { ...t, completed: true, inProgress: false, proofImage } : t);
+    const newCoins = coins + reward;
+    setTasks(newTasks);
+    setCoins(newCoins);
+    smartSave({ tasks: newTasks, coins: newCoins });
   };
 
   const saveNewTask = (task: Task) => {
@@ -178,11 +176,11 @@ export function useGameEngine(currentUser: string | null) {
     setTasks(newTasks);
     smartSave({ tasks: newTasks });
   };
-  
+
   const resetTasks = () => {
-      const newTasks = tasks.map(t => ({...t, archived: true, inProgress: false}));
-      setTasks(newTasks);
-      smartSave({ tasks: newTasks });
+    const newTasks = tasks.map(t => ({ ...t, archived: true, inProgress: false }));
+    setTasks(newTasks);
+    smartSave({ tasks: newTasks });
   };
 
   const saveTheme = (newTheme: string) => { setTheme(newTheme); smartSave({ theme: newTheme }); };
@@ -191,7 +189,7 @@ export function useGameEngine(currentUser: string | null) {
   return {
     coins, parcelaObjects, tasks, username, theme,
     isDataLoaded, isSaving, showUsernameModal, setShowUsernameModal,
-    saveUsername, saveTheme, buyItem, 
+    saveUsername, saveTheme, buyItem,
     setParcelaObjects, objectsRef, smartSave, updateObjectsVisual,
     completeTask, saveNewTask, editTask, rerollTask, switchActiveTask, updateTaskStatus, resetTasks
   };

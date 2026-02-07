@@ -29,7 +29,7 @@ export function updateCoinDisplays(): void {
     displays.forEach(el => {
         el.textContent = (el.id === 'header-coins-display' || el.id === 'total-coins-display') ? `${totalMonedas} 💰` : totalMonedas.toString();
     });
-    
+
     const countDisplay = document.getElementById('components-count');
     if (countDisplay) {
         countDisplay.textContent = componentesComprados.toString();
@@ -42,7 +42,6 @@ export function changeThemeColor(colorName: string): void {
     if (colors) {
         root.style.setProperty('--theme-color-primary', colors.primary);
         root.style.setProperty('--theme-color-bg', colors.bg);
-        console.log(`Tonalidad cambiada a: ${colorName}`);
     }
 }
 
@@ -51,8 +50,8 @@ function closeTycoonPanel(): void {
     if (panel && panel.classList.contains('scale-y-100')) {
         panel.classList.remove('scale-y-100');
         panel.classList.add('scale-y-0');
-        setTimeout(() => { 
-            if (panel) panel.style.display = 'none'; 
+        setTimeout(() => {
+            if (panel) panel.style.display = 'none';
         }, 300);
     }
 }
@@ -62,8 +61,8 @@ function closeConfigDropdown(): void {
     if (dropdown && dropdown.classList.contains('scale-y-100')) {
         dropdown.classList.remove('scale-y-100');
         dropdown.classList.add('scale-y-0');
-        setTimeout(() => { 
-            if (dropdown) dropdown.style.display = 'none'; 
+        setTimeout(() => {
+            if (dropdown) dropdown.style.display = 'none';
         }, 200);
     }
 }
@@ -71,7 +70,7 @@ function closeConfigDropdown(): void {
 function closeAllDrawers(): void {
     const storeDrawer = document.getElementById('store-drawer');
     const activitiesDrawer = document.getElementById('activities-drawer');
-    
+
     if (storeDrawer && storeDrawer.classList.contains('translate-x-0')) {
         storeDrawer.classList.remove('translate-x-0');
         storeDrawer.classList.add('-translate-x-full');
@@ -114,7 +113,7 @@ export function toggleTycoonPanel(): void {
     if (!panel) return;
 
     const isVisible = panel.classList.contains('scale-y-100');
-    
+
     closeAllDrawers();
     closeConfigDropdown();
 
@@ -137,14 +136,14 @@ export function toggleConfigDropdown(): void {
 
     const isVisible = dropdown.classList.contains('scale-y-100');
 
-    closeAllDrawers(); 
+    closeAllDrawers();
     closeTycoonPanel();
 
     if (isVisible) {
         closeConfigDropdown();
     } else {
         dropdown.style.display = 'block';
-        setTimeout(() => { 
+        setTimeout(() => {
             if (dropdown) {
                 dropdown.classList.remove('scale-y-0');
                 dropdown.classList.add('scale-y-100');
@@ -160,18 +159,18 @@ export function toggleConfigDropdown(): void {
 function startChoppingAnimation(): void {
     let frame: number = 0;
     const choppingFrames: string[] = [
-        './assets/sprites/lumberjack_chop_up.png', 
+        './assets/sprites/lumberjack_chop_up.png',
         './assets/sprites/lumberjack_chop_down.png'
     ];
-    
-    const parcelText = document.getElementById('parcel-text'); 
+
+    const parcelText = document.getElementById('parcel-text');
 
     if (parcelText) parcelText.classList.add('hidden');
-    
+
     const lumberjackSprite = document.getElementById('lumberjack-sprite') as HTMLImageElement | null;
     if (lumberjackSprite) {
         lumberjackSprite.classList.remove('bottom-0');
-        lumberjackSprite.classList.add('bottom-0', 'left-1/4'); 
+        lumberjackSprite.classList.add('bottom-0', 'left-1/4');
     }
 
     if (animationInterval) clearInterval(animationInterval);
@@ -191,14 +190,14 @@ function stopChoppingAnimation(): void {
 function startSittingAnimation(): void {
     let frame: number = 0;
     const sittingFrames: string[] = [
-        './assets/sprites/lumberjack_sit_idle.png', 
+        './assets/sprites/lumberjack_sit_idle.png',
         './assets/sprites/lumberjack_sit_music.png'
     ];
 
     const lumberjackSprite = document.getElementById('lumberjack-sprite');
     if (lumberjackSprite) {
-        lumberjackSprite.classList.remove('left-1/4'); 
-        lumberjackSprite.classList.add('left-[35%]'); 
+        lumberjackSprite.classList.remove('left-1/4');
+        lumberjackSprite.classList.add('left-[35%]');
     }
 
     if (sittingAnimationInterval) clearInterval(sittingAnimationInterval);
@@ -220,7 +219,7 @@ function stopSittingAnimation(): void {
     if (lumberjackSprite) {
         lumberjackSprite.src = './assets/sprites/lumberjack_idle.png';
         lumberjackSprite.classList.remove('left-[35%]');
-        lumberjackSprite.classList.add('bottom-0'); 
+        lumberjackSprite.classList.add('bottom-0');
     }
     if (parcelText) parcelText.classList.remove('hidden');
 }
@@ -236,7 +235,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let userId = 'defaultUser'; // fallback
 
     // Esperar a que Auth esté listo y obtener uid para leer datos del usuario
-        onAuthStateChanged(async (user) => {
+    onAuthStateChanged(async (user) => {
         if (user) {
             userId = user.uid;
         } else {
@@ -281,7 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // 3. Simular el tiempo de la tarea (3 segundos de corte)
             setTimeout(async () => {
-                stopChoppingAnimation(); 
+                stopChoppingAnimation();
 
                 // 4. Sumar recompensa y actualizar UI
                 const userData = await getUserData(userId);
@@ -290,8 +289,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 await saveUserData(userId, { coins: currentCoins });
                 totalMonedas = currentCoins;
-                updateCoinDisplays(); 
-                
+                updateCoinDisplays();
+
                 // 5. Marcar tarea como completada visualmente
                 if (taskDiv) {
                     taskDiv.classList.remove('liquid-glass-panel');
@@ -306,12 +305,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // 7. Tiempo de "descanso" (2 segundos)
                 setTimeout(() => {
-                    stopSittingAnimation(); 
+                    stopSittingAnimation();
                     document.querySelectorAll('.complete-task').forEach(btn => (btn as HTMLButtonElement).disabled = false);
                     alert(`¡Tarea completada! Ganaste ${reward} monedas. Saldo total: ${currentCoins}`);
                 }, 2000);
 
-            }, currentTaskDuration); 
+            }, currentTaskDuration);
         }
     });
 
@@ -354,20 +353,20 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- MANEJO DE CLICKS GENERALES (Color Picker, Tycoon Panel, Configuración) ---
     document.addEventListener('click', (event: Event) => {
         const targetElement = event.target instanceof HTMLElement ? event.target : null;
-        
+
         const picker = targetElement ? targetElement.closest('.color-picker') as HTMLButtonElement | null : null;
         const configBtn = targetElement ? targetElement.closest('#toggle-config-btn') : null;
         const tycoonBtn = targetElement ? targetElement.closest('#toggle-tycoon-panel-btn') : null;
-        
+
         const dropdown = document.getElementById('config-dropdown');
         const tycoonPanel = document.getElementById('tycoon-panel-dropdown');
 
         if (picker) {
             const color = picker.dataset.color;
             if (color) changeThemeColor(color);
-            toggleConfigDropdown(); 
-        } 
-        
+            toggleConfigDropdown();
+        }
+
         // Cierre de configuración
         if (dropdown && !configBtn && !dropdown.contains(targetElement as Node) && dropdown.classList.contains('scale-y-100')) {
             closeConfigDropdown();
@@ -379,7 +378,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Cierre de todos los componentes con tecla ESC
-    document.addEventListener('keydown', function(event: KeyboardEvent) {
+    document.addEventListener('keydown', function (event: KeyboardEvent) {
         if (event.key === 'Escape') {
             closeAllDrawers();
             closeConfigDropdown();
