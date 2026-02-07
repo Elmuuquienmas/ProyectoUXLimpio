@@ -2,7 +2,13 @@ import { supabase } from './supabaseClient'; // Ajusta la ruta si es necesario
 
 // --- AUTH ---
 export const signUpWithEmail = async (email: string, pass: string) => {
-  const { data, error } = await supabase.auth.signUp({ email, password: pass });
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password: pass,
+    options: {
+      emailRedirectTo: 'https://yotip-seven.vercel.app/'
+    }
+  });
   if (error) throw error;
   return data.user;
 };
