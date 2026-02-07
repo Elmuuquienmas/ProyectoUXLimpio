@@ -135,13 +135,30 @@ export function useGameEngine(currentUser: string | null) {
 
   const completeTask = (taskId: number, reward: number, proofImage: string) => {
     const newTasks = tasks.map(t => t.id === taskId ? { ...t, completed: true, inProgress: false, proofImage } : t);
-    const newCoins = coins + reward;
+    const newCoins = Math.min(coins + reward, 1000); // SECURITY: Cap at 1000 coins
     setTasks(newTasks);
     setCoins(newCoins);
     smartSave({ tasks: newTasks, coins: newCoins });
   };
 
   const saveNewTask = (task: Task) => {
+    // SECURITY: Cooldown check
+    const activeTasksCount = tasks.filter(t => !t.archived && !t.completed).length;
+
+    // Check if cooldown is active
+    const cooldownEndTime = localStorage.getItem(`task_cooldown_${currentUser}`);
+    if (cooldownEndTime && Date.now() < parseInt(cooldownEndTime)) {
+      const remainingMinutes = Math.ceil((parseInt(cooldownEndTime) - Date.now()) / 60000);
+      throw new Error(`¡Límite alcanzado! Espera ${remainingMinutes} min para crear más tareas.`);
+    }
+
+    // Apply limit: If already >= 5, set cooldown for NEXT time, but ALLOW this one.
+    if (activeTasksCount >= 5) {
+      const cooldown = Date.now() + 5 * 60 * 1000; // 5 minutes
+      localStorage.setItem(`task_cooldown_${currentUser}`, cooldown.toString());
+      // We do NOT throw here. We proceed to create.
+    }
+
     const newTasks = [...tasks, task];
     setTasks(newTasks);
     smartSave({ tasks: newTasks });

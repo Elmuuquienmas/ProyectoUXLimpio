@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "./hooks/useAuth";
 import { useGameEngine } from "./hooks/useGameEngine";
-import { registerUsername } from "./hooks/supabaseUtils"; 
+import { registerUsername } from "./hooks/supabaseUtils";
 
 import type { Task, ParcelaObject, ViewTransform, StoreItem, Toast } from './types';
 import {
@@ -43,11 +43,11 @@ const compressImage = (file: File): Promise<string> => {
       img.src = result;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 600; 
+        const MAX_WIDTH = 600;
         const MAX_HEIGHT = 600;
         let width = img.width;
         let height = img.height;
-        if (width > height) { if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; } } 
+        if (width > height) { if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; } }
         else { if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; } }
         canvas.width = width; canvas.height = height;
         const ctx = canvas.getContext('2d');
@@ -66,11 +66,11 @@ const getMidpoint = (touches: any) => ({ x: (touches[0].clientX + touches[1].cli
 
 function App() {
   const { currentUser, authLoading, loginError, login, signup, logout, setLoginError } = useAuth();
-  
-  const { 
-    coins, parcelaObjects, tasks, username, theme, 
+
+  const {
+    coins, parcelaObjects, tasks, username, theme,
     isDataLoaded, isSaving, showUsernameModal, setShowUsernameModal, saveUsername, saveTheme,
-    buyItem, setParcelaObjects, objectsRef, smartSave, 
+    buyItem, setParcelaObjects, objectsRef, smartSave,
     completeTask, saveNewTask, updateTaskStatus, resetTasks, switchActiveTask // <--- IMPORTANTE
   } = useGameEngine(currentUser);
 
@@ -79,7 +79,7 @@ function App() {
   const [password, setPassword] = useState("");
   const [isSignup, setIsSignup] = useState(false);
   const [signupPrompt, setSignupPrompt] = useState(false);
-  
+
   const [storeDrawerOpen, setStoreDrawerOpen] = useState(false);
   const [activitiesDrawerOpen, setActivitiesDrawerOpen] = useState(false);
   const [configDropdownOpen, setConfigDropdownOpen] = useState(false);
@@ -87,7 +87,7 @@ function App() {
   const [isContactOpen, setIsContactOpen] = useState(false);
   const [isBannerExpanded, setIsBannerExpanded] = useState(false);
   const [isAddTaskModalOpen, setIsAddTaskModalOpen] = useState(false);
-  
+
   const [desiredUsername, setDesiredUsername] = useState("");
   const [usernameError, setUsernameError] = useState("");
   const [usernameChecking, setUsernameChecking] = useState(false);
@@ -101,7 +101,7 @@ function App() {
 
   // --- ESTADOS NUEVOS ---
   const [restEndTime, setRestEndTime] = useState<number | null>(null);
-  const taskStartTimes = useRef<{ [key: number]: number }>({}); 
+  const taskStartTimes = useRef<{ [key: number]: number }>({});
   const clickCounterRef = useRef<{ id: number, count: number, lastTime: number }>({ id: 0, count: 0, lastTime: 0 });
 
   // Drag & Zoom
@@ -136,7 +136,7 @@ function App() {
     if (activeTask) {
       setActiveTaskId(activeTask.id);
       setAnimationState('chopping');
-      setRestEndTime(null); 
+      setRestEndTime(null);
     } else {
       setActiveTaskId(null);
       if (restEndTime && Date.now() < restEndTime) {
@@ -151,11 +151,11 @@ function App() {
   }, [tasks, restEndTime]);
 
   useEffect(() => {
-      let interval: number | undefined;
-      if (animationState === "chopping") interval = window.setInterval(() => setLumberjackFrame(p => (p + 1) % 2), 300) as unknown as number;
-      else if (animationState === "sitting") interval = window.setInterval(() => setLumberjackFrame(p => (p + 1) % 2), 500) as unknown as number;
-      else setLumberjackFrame(0);
-      return () => { if (interval !== undefined) window.clearInterval(interval); };
+    let interval: number | undefined;
+    if (animationState === "chopping") interval = window.setInterval(() => setLumberjackFrame(p => (p + 1) % 2), 300) as unknown as number;
+    else if (animationState === "sitting") interval = window.setInterval(() => setLumberjackFrame(p => (p + 1) % 2), 500) as unknown as number;
+    else setLumberjackFrame(0);
+    return () => { if (interval !== undefined) window.clearInterval(interval); };
   }, [animationState]);
 
   const showToast = useCallback((message: string, type: any = "success") => {
@@ -204,29 +204,34 @@ function App() {
 
   const removeParcelaObject = (id: string | number) => {
     const newObjects = parcelaObjects.filter(o => o.id !== id);
-    setParcelaObjects(newObjects); 
+    setParcelaObjects(newObjects);
     smartSave({ objects: newObjects });
   };
 
   const handleAddTask = (e: React.FormEvent<HTMLFormElement>) => {
-      e.preventDefault();
-      const target = e.currentTarget as any;
-      saveNewTask({ 
-        id: Date.now(), name: target.taskName.value, reward: parseInt(target.taskReward.value), 
-        deadline: target.taskDeadline.value || null, completed: false, inProgress: false, proofImage: null, archived: false 
+    e.preventDefault();
+    const target = e.currentTarget as any;
+    try {
+      saveNewTask({
+        id: Date.now(), name: target.taskName.value, reward: parseInt(target.taskReward.value),
+        deadline: target.taskDeadline.value || null, completed: false, inProgress: false, proofImage: null, archived: false
       });
       setIsAddTaskModalOpen(false);
+      showToast("Tarea creada", "success");
+    } catch (err: any) {
+      showToast(err.message, "error");
+    }
   };
 
   // --- BOTÓN INICIAR (UN SOLO CLICK) ---
   const handleStartTask = (id: number) => {
-      // VALIDACIÓN: No permite iniciar si ya hay otra activa
-      const isAnyTaskActive = tasks.some(t => t.inProgress && !t.archived);
-      if (isAnyTaskActive) { showToast("¡Termina tu tarea actual primero!", "error"); return; }
+    // VALIDACIÓN: No permite iniciar si ya hay otra activa
+    const isAnyTaskActive = tasks.some(t => t.inProgress && !t.archived);
+    if (isAnyTaskActive) { showToast("¡Termina tu tarea actual primero!", "error"); return; }
 
-      taskStartTimes.current[id] = Date.now();
-      setRestEndTime(null);
-      updateTaskStatus(id, true); 
+    taskStartTimes.current[id] = Date.now();
+    setRestEndTime(null);
+    updateTaskStatus(id, true);
   };
 
   // --- LÓGICA DE 5 CLICKS: CAMBIO FORZADO ---
@@ -245,47 +250,47 @@ function App() {
 
     // ¡5 CLICKS DETECTADOS! -> EJECUTAR CAMBIO
     if (clickCounterRef.current.count >= 5) {
-      setIsAnimating(true); 
-      
+      setIsAnimating(true);
+
       // 1. Guardamos la hora de inicio de la NUEVA tarea
       taskStartTimes.current[task.id] = Date.now();
-      
+
       // 2. Cancelamos cualquier descanso si había
       setRestEndTime(null);
 
       // 3. Ejecutamos el cambio en el motor (apaga la anterior, prende esta)
       switchActiveTask(task.id);
-      
+
       showToast(`¡Cambiando a: ${task.name}!`, "success");
       clickCounterRef.current.count = 0; // Reset contador
-      
+
       setTimeout(() => setIsAnimating(false), 300);
     }
   };
 
   const triggerFileUpload = (taskId: number) => {
-      setTaskToCompleteId(taskId);
-      if (fileInputRef.current) { fileInputRef.current.value = ''; fileInputRef.current.click(); }
+    setTaskToCompleteId(taskId);
+    if (fileInputRef.current) { fileInputRef.current.value = ''; fileInputRef.current.click(); }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files ? e.target.files[0] : null;
-      if (!file || !taskToCompleteId) return;
-      try {
-          setIsAnimating(true);
-          const base64 = await compressImage(file);
-          const task = tasks.find(t => t.id === taskToCompleteId);
-          if (task) { 
-             completeTask(taskToCompleteId, task.reward, base64); 
-             showToast(`¡+${task.reward} monedas!`, 'success'); 
-             
-             // CALCULO DEL DESCANSO
-             const startTime = taskStartTimes.current[taskToCompleteId];
-             let duration = 5000;
-             if (startTime) duration = Date.now() - startTime;
-             setRestEndTime(Date.now() + duration);
-          }
-      } catch (e) { showToast("Error imagen", 'error'); } finally { setIsAnimating(false); setTaskToCompleteId(null); }
+    const file = e.target.files ? e.target.files[0] : null;
+    if (!file || !taskToCompleteId) return;
+    try {
+      setIsAnimating(true);
+      const base64 = await compressImage(file);
+      const task = tasks.find(t => t.id === taskToCompleteId);
+      if (task) {
+        completeTask(taskToCompleteId, task.reward, base64);
+        showToast(`¡+${task.reward} monedas!`, 'success');
+
+        // CALCULO DEL DESCANSO
+        const startTime = taskStartTimes.current[taskToCompleteId];
+        let duration = 5000;
+        if (startTime) duration = Date.now() - startTime;
+        setRestEndTime(Date.now() + duration);
+      }
+    } catch (e) { showToast("Error imagen", 'error'); } finally { setIsAnimating(false); setTaskToCompleteId(null); }
   };
 
   const handleDeleteAllTasks = () => {
@@ -324,10 +329,10 @@ function App() {
     const clientX = (e as TouchEvent).type && (e as TouchEvent).type.includes('touch') ? (e as TouchEvent).touches[0].clientX : (e as MouseEvent).clientX;
     const clientY = (e as TouchEvent).type && (e as TouchEvent).type.includes('touch') ? (e as TouchEvent).touches[0].clientY : (e as MouseEvent).clientY;
     const rect = parcelaRef.current.getBoundingClientRect();
-    
+
     let left = Math.max(0, Math.min(100, ((clientX - rect.left - dragOffset.current.x) / rect.width) * 100));
     let top = Math.max(0, Math.min(100, ((clientY - rect.top - dragOffset.current.y) / rect.height) * 100));
-    
+
     setParcelaObjects(prev => prev.map(o => o.id === draggedObjectId ? { ...o, position: { top, left } } : o));
   }, [isDragging, draggedObjectId, setParcelaObjects]);
 
@@ -520,8 +525,8 @@ function App() {
 
       {isSaving && (
         <div className="fixed top-4 right-4 z-[100] bg-black/80 backdrop-blur-md text-white px-4 py-2 rounded-full shadow-2xl border border-white/20 flex items-center gap-3 animate-pulse">
-            <Loader2 className="animate-spin text-indigo-400" size={18}/>
-            <span className="text-xs font-bold tracking-wider uppercase">Guardando...</span>
+          <Loader2 className="animate-spin text-indigo-400" size={18} />
+          <span className="text-xs font-bold tracking-wider uppercase">Guardando...</span>
         </div>
       )}
 
@@ -605,8 +610,8 @@ function App() {
 
         <div className="space-y-3 overflow-y-auto flex-1 pr-1 min-h-0">
           {tasks.filter(t => !t.archived).map((task) => (
-            <div 
-              key={task.id} 
+            <div
+              key={task.id}
               onClick={() => handleTaskCardClick(task)} // <--- AQUI SE DETECTAN LOS 5 CLICKS
               className={`relative p-4 rounded-2xl border transition-all select-none cursor-pointer active:scale-[0.98] ${task.completed ? "bg-green-50/60 border-green-200/60 opacity-90" : task.inProgress ? "bg-slate-800 border-slate-600 text-white shadow-xl scale-[1.02]" : "liquid-glass-panel"}`}
             >
